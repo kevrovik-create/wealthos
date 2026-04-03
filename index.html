@@ -1282,7 +1282,7 @@ function delSav(id){D.savings=D.savings.filter(s=>s.id!==id);save();renderSaving
 function updSav(id,v){const s=D.savings.find(s=>s.id===id);if(s){s.amount=parseN(v)||0;save();updateAll();}}
 const SLBL={bank:'🏦 Bank',stocks:'📈 Aksjer/fond',crypto:'₿ Krypto',bonds:'📄 Obligasjoner',other:'💼 Annet'};
 const STAX={bank:0,stocks:TS,crypto:TS,bonds:0.22,other:0};
-function renderSavings(){const el=document.getElementById('sav-list');const total=D.savings.reduce((s,a)=>s+(+a.amount||0),0);if(!D.savings.length){el.innerHTML='<div class="empty">Ingen kontoer ennå</div>';return;}el.innerHTML=`<div style="font-size:12px;color:#64748b;margin-bottom:12px">Total: <span style="color:#2563eb;font-size:15px;font-weight:700">kr ${fmt(total)}</span></div>`+D.savings.map(a=>{const taxRate=STAX[a.type]||0,eg=(a.amount||0)*(a.return||0)/100,et=eg*taxRate;return`<div style="padding:10px 0;border-bottom:1px solid #f1f5f9"><div style="display:flex;align-items:center;justify-content:space-between"><div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0"><div style="width:10px;height:10px;border-radius:50%;background:${a.color};flex-shrink:0"></div><div><div style="font-size:13px;font-weight:600">${esc(a.name)}</div><div style="font-size:11px;color:#94a3b8">${SLBL[a.type]||a.type}${a.return?' — '+a.return+'% avk.':''}${taxRate?' — '+Math.round(taxRate*100)+'% skatt':''}</div></div></div><div style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:8px"><span style="font-weight:700">kr <input type="text" inputmode="decimal" class="fi-inline fnum" value="${fmt(a.amount)}" onfocus="this.value=parseN(this.value)||''" onblur="this.value=fmt(parseN(this.value));updSav(${a.id},this.value)" style="width:90px;text-align:right;font-weight:700"/></span><button class="btn-del" onclick="delSav(${a.id})" style="color:#ef4444">×</button></div></div>${eg>0?`<div style="font-size:11px;color:#64748b;margin-top:3px;margin-left:20px">Forv. gevinst/år: kr ${fmt(Math.round(eg))} | Skatt: kr ${fmt(Math.round(et))}</div>`:''}</div>`;}).join('');}
+function renderSavings(){const el=document.getElementById('sav-list');if(!el)return;const total=D.savings.reduce((s,a)=>s+(+a.amount||0),0);if(!D.savings.length){el.innerHTML='<div class="empty">Ingen kontoer ennå</div>';return;}el.innerHTML=`<div style="font-size:12px;color:#64748b;margin-bottom:12px">Total: <span style="color:#2563eb;font-size:15px;font-weight:700">kr ${fmt(total)}</span></div>`+D.savings.map(a=>{const taxRate=STAX[a.type]||0,eg=(a.amount||0)*(a.return||0)/100,et=eg*taxRate;return`<div style="padding:10px 0;border-bottom:1px solid #f1f5f9"><div style="display:flex;align-items:center;justify-content:space-between"><div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0"><div style="width:10px;height:10px;border-radius:50%;background:${a.color};flex-shrink:0"></div><div><div style="font-size:13px;font-weight:600">${esc(a.name)}</div><div style="font-size:11px;color:#94a3b8">${SLBL[a.type]||a.type}${a.return?' — '+a.return+'% avk.':''}${taxRate?' — '+Math.round(taxRate*100)+'% skatt':''}</div></div></div><div style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:8px"><span style="font-weight:700">kr <input type="text" inputmode="decimal" class="fi-inline fnum" value="${fmt(a.amount)}" onfocus="this.value=parseN(this.value)||''" onblur="this.value=fmt(parseN(this.value));updSav(${a.id},this.value)" style="width:90px;text-align:right;font-weight:700"/></span><button class="btn-del" onclick="delSav(${a.id})" style="color:#ef4444">×</button></div></div>${eg>0?`<div style="font-size:11px;color:#64748b;margin-top:3px;margin-left:20px">Forv. gevinst/år: kr ${fmt(Math.round(eg))} | Skatt: kr ${fmt(Math.round(et))}</div>`:''}</div>`;}).join('');}
 
 // ── LOANS ──
 function saveLoan(){D.loans.push({id:Date.now(),name:document.getElementById('lf-name').value||'Lån',amount:gv('lf-amt'),rate:gv('lf-rate'),years:gv('lf-yrs'),type:document.getElementById('lf-type').value});save();renderLoans();updateAll();toggleForm('loan-form');['lf-name','lf-amt','lf-rate','lf-yrs'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});}
@@ -1387,6 +1387,8 @@ const client = supabase.createClient(
   "https://envjvqsiisjgshhhahjy.supabase.co",
   "sb_publishable_l_oy4l07F6qEDQS5BgVG6Q_6PaeGhre"
 );
+
+// LOGIN
 async function doLogin(){
   const email = document.getElementById('login-email').value.trim();
   const pass = document.getElementById('login-pass').value;
@@ -1405,6 +1407,7 @@ async function doLogin(){
     alert("Feil: " + error.message);
   } else {
     alert("Innlogget!");
+
     showProfile({
       name: email.split('@')[0],
       email,
@@ -1413,7 +1416,32 @@ async function doLogin(){
   }
 }
 
+// SIGNUP
+async function doSignup(){
+  const name = document.getElementById('signup-name').value.trim();
+  const email = document.getElementById('signup-email').value.trim();
+  const pass = document.getElementById('signup-pass').value;
+  const pass2 = document.getElementById('signup-pass2').value;
+
+  if(!name || !email || !pass){
+    alert('Fyll inn alle felt.');
+    return;
+  }
+
+  if(pass !== pass2){
+    alert('Passordene stemmer ikke.');
+    return;
+  }
+
+  const { data, error } = await client.auth.signUp({
+    email: email,
+    password: pass
+  });
+
+  if(error){
+    alert("Feil: " + error.message);
+  } else {
+    alert("Bruker opprettet!");
+  }
+}
 </script>
-  
-</body>
-</html>
