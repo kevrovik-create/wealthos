@@ -1380,68 +1380,68 @@ updateAll();
 });
 </script>
 
-<script type="module" src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+<script type="module">
+  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js';
 
-<script>
-const client = supabase.createClient(
-  "https://enyjvqsiisjgshhhahjy.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVueWp2cXNpaXNqZ3NoaGhhaGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyMDkzMzEsImV4cCI6MjA5MDc4NTMzMX0.an0cHuOTrTnotUBM8e-vWiIB7gNYkLP7QJd5D0K0YE0"
-);
+  const supabaseUrl = "https://enyjvqsiisjgshhhahjy.supabase.co";
+  const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVueWp2cXNpaXNqZ3NoaGhhaGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyMDkzMzEsImV4cCI6MjA5MDc4NTMzMX0.an0cHuOTrTnotUBM8e-vWiIB7gNYkLP7QJd5D0K0YE0";
+  const client = createClient(supabaseUrl, supabaseKey);
 
-// LOGIN
-async function doLogin(){
-  const email = document.getElementById('login-email').value.trim();
-  const pass = document.getElementById('login-pass').value;
+  // Expose functions globally for onclick attributes
+  window.doLogin = async () => {
+    const email = document.getElementById("login-email").value.trim();
+    const pass = document.getElementById("login-pass").value;
 
-  if(!email || !pass){
-    alert('Fyll inn e-post og passord.');
-    return;
-  }
+    if(!email || !pass){
+      alert("Fyll inn e-post og passord.");
+      return;
+    }
 
-  const { data, error } = await client.auth.signInWithPassword({
-    email: email,
-    password: pass
-  });
-
-  if(error){
-    alert("Feil: " + error.message);
-  } else {
-    alert("Innlogget!");
-
-    showProfile({
-      name: email.split('@')[0],
-      email,
-      since: new Date().toLocaleDateString('nb-NO',{month:'short',year:'numeric'})
+    const { data, error } = await client.auth.signInWithPassword({
+      email: email,
+      password: pass
     });
-  }
-}
 
-// SIGNUP
-async function doSignup(){
-  const name = document.getElementById('signup-name').value.trim();
-  const email = document.getElementById('signup-email').value.trim();
-  const pass = document.getElementById('signup-pass').value;
-  const pass2 = document.getElementById('signup-pass2').value;
+    if(error){
+      alert("Feil: " + error.message);
+    } else {
+      alert("Innlogget!");
 
-  if(!name || !email || !pass){
-    alert('Fyll inn alle felt.');
-    return;
-  }
+      showProfile({
+        name: email.split("@")[0],
+        email,
+        since: new Date().toLocaleDateString("nb-NO",{month:"short",year:"numeric"})
+      });
+    }
+  };
 
-  if(pass !== pass2){
-    alert('Passordene stemmer ikke.');
-    return;
-  }
+  window.doSignup = async () => {
+    const name = document.getElementById("signup-name").value.trim();
+    const email = document.getElementById("signup-email").value.trim();
+    const pass = document.getElementById("signup-pass").value;
+    const pass2 = document.getElementById("signup-pass2").value;
 
-  const { data, error } = await client.auth.signUp({
-    email: email,
-    password: pass
-  });
+    if(!name || !email || !pass){
+      alert("Fyll inn alle felt.");
+      return;
+    }
 
-  if(error){
-    alert("Feil: " + error.message);
-  } else {
-    alert("Bruker opprettet!");
-  }
-}
+    if(pass !== pass2){
+      alert("Passordene stemmer ikke.");
+      return;
+    }
+
+    const { data, error } = await client.auth.signUp({
+      email: email,
+      password: pass
+    });
+
+    if(error){
+      alert("Feil: " + error.message);
+    } else {
+      alert("Bruker opprettet!");
+    }
+  };
 </script>
+</body>
+</html>
