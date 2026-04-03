@@ -163,21 +163,6 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
 </style>
 </head>
 <body>
-<div style="padding:20px;">
-  <input id="email" placeholder="Email" />
-  <input id="password" type="password" placeholder="Password" />
-  
-  <button onclick="signUp(
-    document.getElementById('email').value,
-    document.getElementById('password').value
-  )">Sign Up</button>
-
-  <button onclick="login(
-    document.getElementById('email').value,
-    document.getElementById('password').value
-  )">Login</button>
-</div>
-
 <div class="topbar">
   <div class="logo">WEALTH<span>OS</span><span class="pro">PRO</span></div>
   <div style="font-size:11px;color:#94a3b8" id="dateEl"></div>
@@ -1321,14 +1306,34 @@ function toggleForm(id){document.getElementById(id).classList.toggle('open');}
 
 // ── LOGIN / PROFILE (visual only) ──
 function toggleSignup(){const l=document.getElementById('login-form-area'),s=document.getElementById('signup-form-area');if(l.style.display==='none'){l.style.display='block';s.style.display='none';}else{l.style.display='none';s.style.display='block';}}
-function doLogin(){
-const email=document.getElementById('login-email').value.trim();
-const pass=document.getElementById('login-pass').value;
-if(!email||!pass){alert('Fyll inn e-post og passord.');return;}
-// Visual only — store locally
-const profile={name:email.split('@')[0],email,loggedIn:true,since:new Date().toLocaleDateString('nb-NO',{month:'short',year:'numeric'})};
-localStorage.setItem('wOS_profile',JSON.stringify(profile));
-showProfile(profile);
+async function doLogin(){
+  const email = document.getElementById('login-email').value.trim();
+  const pass = document.getElementById('login-pass').value;
+
+  if(!email || !pass){
+    alert('Fyll inn e-post og passord.');
+    return;
+  }
+
+  const { data, error } = await client.auth.signInWithPassword({
+    email: email,
+    password: pass
+  });
+
+  if(error){
+    alert("Feil: " + error.message);
+  } else {
+    alert("Innlogget!");
+
+    const profile = {
+      name: email.split('@')[0],
+      email,
+      loggedIn: true,
+      since: new Date().toLocaleDateString('nb-NO',{month:'short',year:'numeric'})
+    };
+
+    showProfile(profile);
+  }
 }
 function doSignup(){
 const name=document.getElementById('signup-name').value.trim();
