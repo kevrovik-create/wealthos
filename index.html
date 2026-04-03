@@ -163,6 +163,21 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
 </style>
 </head>
 <body>
+<div style="padding:20px;">
+  <input id="email" placeholder="Email" />
+  <input id="password" type="password" placeholder="Password" />
+  
+  <button onclick="signUp(
+    document.getElementById('email').value,
+    document.getElementById('password').value
+  )">Sign Up</button>
+
+  <button onclick="login(
+    document.getElementById('email').value,
+    document.getElementById('password').value
+  )">Login</button>
+</div>
+
 <div class="topbar">
   <div class="logo">WEALTH<span>OS</span><span class="pro">PRO</span></div>
   <div style="font-size:11px;color:#94a3b8" id="dateEl"></div>
@@ -1368,6 +1383,31 @@ const client = supabase.createClient(
   "https://envjvqsiisjgshhhahjy.supabase.co",
   "sb_publishable_l_oy4l07F6qEDQS5BgVG6Q_6PaeGhre"
 );
+
+async function signUp(email, password) {
+  const { data, error } = await client.auth.signUp({
+    email: email,
+    password: password
+  });
+
+  if (error) {
+    alert("Error: " + error.message);
+  } else {
+    alert("User created!");
+  }
+}
+
+async function login(email, password) {
+  const { data, error } = await client.auth.signInWithPassword({
+    email: email,
+    password: password
+  });
+
+  if (error) {
+    alert("Error: " + error.message);
+  } else {
+    alert("Logged in!");
+  }
 </script>
   
 </body>
