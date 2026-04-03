@@ -159,6 +159,11 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
 .divider{height:1px;background:#f1f5f9;margin:11px 0;}
 .loan-card{background:#fff;border-radius:14px;margin-bottom:11px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);}
 .loan-hdr{padding:14px 15px;background:#fef2f2;display:flex;justify-content:space-between;align-items:center;gap:9px;}
+.pro-lock{display:flex;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.85);z-index:10;align-items:center;justify-content:center;border-radius:10px;cursor:pointer;backdrop-filter:blur(2px);}
+.pro-content{transition:filter .3s;}
+.pro-badge-inline{display:inline-flex;align-items:center;gap:4px;background:#fef9c3;color:#a16207;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;cursor:pointer;}
+#paywall-modal{animation:fadeIn .2s ease-out;}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @media(min-width:600px){.strip,.hero-grid{grid-template-columns:repeat(4,1fr);}}
 </style>
 </head>
@@ -187,6 +192,25 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
     <div style="margin-top:10px;padding:9px 12px;background:#f8fafc;border-radius:8px;font-size:11px;color:#94a3b8;line-height:1.6">Estimat basert på nåværende portefølje. Prisvekst eiendom: 4%/år. Aksjer/krypto: 7%/år etter 37.8% skatt. Bank: 3%/år. Reelle tall vil variere.</div>
   </div>
   <div id="next-step-wrap"></div>
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hdr"><div class="card-ttl">💎 Netto formue — tre perspektiver</div><span class="badge bdg-purple">Etter skatt</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-bottom:10px">
+      <div class="metric"><div class="metric-lbl">Regnskapsmessig</div><div class="metric-val neutral" id="nw-accounting">kr 0</div><div class="metric-sub">Aktiva − gjeld</div></div>
+      <div class="metric"><div class="metric-lbl">Markedsverdi</div><div class="metric-val good" id="nw-market">kr 0</div><div class="metric-sub">Nåværende priser</div></div>
+      <div class="metric" style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border-color:#16a34a"><div class="metric-lbl" style="color:#16a34a">Etter skatt ⭐</div><div class="metric-val good" id="nw-aftertax">kr 0</div><div class="metric-sub">Reelt uttak i dag</div></div>
+    </div>
+    <div style="position:relative">
+      <div class="pro-lock" id="aftertax-lock" style="display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.85);z-index:10;align-items:center;justify-content:center;border-radius:10px;cursor:pointer" onclick="requirePro('Etter-skatt formue')">
+        <div style="text-align:center"><div style="font-size:24px;margin-bottom:6px">🔒</div><div style="font-size:12px;font-weight:700;color:#64748b">PRO-funksjon</div></div>
+      </div>
+      <div class="pro-content" id="aftertax-detail" style="background:#f8fafc;border-radius:10px;padding:12px;font-size:12px;color:#475569;line-height:1.7">
+        <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e2e8f0"><span>Est. skatt ved salg (eiendom)</span><span style="font-weight:700;color:#dc2626" id="nw-at-proptax">kr 0</span></div>
+        <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e2e8f0"><span>Salgskostnader (~2.5%)</span><span style="font-weight:700;color:#dc2626" id="nw-at-propcost">kr 0</span></div>
+        <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e2e8f0"><span>Est. skatt investeringer (37.8%)</span><span style="font-weight:700;color:#dc2626" id="nw-at-invtax">kr 0</span></div>
+        <div style="display:flex;justify-content:space-between;padding:8px 0;border-top:2px solid #0f172a;margin-top:4px;font-weight:800"><span>Reelt uttak etter skatt</span><span style="color:#16a34a;font-size:15px" id="nw-at-net">kr 0</span></div>
+      </div>
+    </div>
+  </div>
   <div class="nw-wrap">
     <button class="nw-toggle" onclick="toggleNW()"><span>📊 Formuesoversikt</span><span id="nw-arrow" style="font-size:12px;transition:transform .2s">▼</span></button>
     <div class="nw-body" id="nw-body">
@@ -219,6 +243,13 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
     <div style="height:200px"><canvas id="wealthChart"></canvas></div>
     <div id="wealth-hint" style="font-size:11px;color:#94a3b8;text-align:center;margin-top:9px">Trykk "Logg i dag" for å bygge historikken. Stiplet linje = prognose basert på valgt vekstrate.</div>
     <div id="wealth-stats" style="display:none;margin-top:10px;padding:10px;background:#f8fafc;border-radius:10px;font-size:12px;color:#64748b;line-height:1.7"></div>
+    <div style="margin-top:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:13px">
+      <div style="font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">📊 Hva driver veksten?</div>
+      <div id="growth-drivers" style="font-size:12px;color:#475569;line-height:1.8"></div>
+      <div style="margin-top:10px;font-size:11px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:8px">
+        <strong>Forutsetninger:</strong> Eiendom +4%/år, Aksjer/krypto +7%/år (etter 37.8% skatt), Bank +3%/år. Juster vekstrate ovenfor for å se effekten.
+      </div>
+    </div>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
     <div class="card" style="margin-bottom:0"><div class="card-hdr" style="margin-bottom:10px"><div class="card-ttl">Aktiva</div></div><div style="height:160px"><canvas id="pieChart"></canvas></div></div>
@@ -307,7 +338,7 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
   </div>
   <div id="t-sim" style="display:none">
     <div class="card">
-      <div class="card-hdr"><div class="card-ttl">📈 Formuesimulering</div><span class="badge bdg-purple">AI-drevet</span></div>
+      <div class="card-hdr"><div class="card-ttl">📈 Formuesimulering</div><span class="pro-badge-inline" onclick="requirePro('Avansert simulering')">👑 PRO</span></div>
       <div class="form-section">Startpunkt</div>
       <div class="fi-2col">
         <div class="fi-group"><label class="fi-label">Startformue (kr)</label><input class="fi fnum" id="sim-start" type="text" inputmode="decimal" placeholder="Auto fra data"/></div>
@@ -494,7 +525,10 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
 
 <div class="page" id="pg-ai">
   <div style="height:13px"></div>
-  <div style="font-size:18px;font-weight:800;margin-bottom:4px">🤖 Wealth AI</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+    <div style="font-size:18px;font-weight:800">🤖 Wealth AI</div>
+    <span class="pro-badge-inline" onclick="requirePro('AI-rådgiver')">👑 PRO</span>
+  </div>
   <div style="font-size:12px;color:#64748b;margin-bottom:13px">Din personlige formuesrådgiver — kjenner porteføljen din</div>
   <div class="card" style="padding:14px">
     <div class="chat-wrap">
@@ -548,7 +582,7 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
       </div>
       <div id="profile-area" style="display:none">
         <div style="display:flex;gap:9px;margin-bottom:12px">
-          <div style="flex:1;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:11px;text-align:center"><div style="font-size:10px;color:#16a34a;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Status</div><div style="font-size:13px;font-weight:800;color:#16a34a">PRO</div></div>
+          <div style="flex:1;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:11px;text-align:center"><div style="font-size:10px;color:#16a34a;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Status</div><div style="font-size:13px;font-weight:800" id="profile-pro-status">GRATIS</div></div>
           <div style="flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:11px;text-align:center"><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Medlem siden</div><div style="font-size:13px;font-weight:800" id="profile-since">—</div></div>
         </div>
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin-bottom:12px">
@@ -591,6 +625,41 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
   </div>
 </div>
 
+<!-- PAYWALL MODAL -->
+<div id="paywall-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:999;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:20px;max-width:400px;width:100%;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,0.3);text-align:center">
+    <div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#16a34a,#15803d);margin:0 auto 16px;display:flex;align-items:center;justify-content:center;font-size:28px">👑</div>
+    <div style="font-size:22px;font-weight:900;margin-bottom:6px">WealthOS Pro</div>
+    <div style="font-size:13px;color:#64748b;margin-bottom:18px"><span id="paywall-feature">Denne funksjonen</span> krever Pro-abonnement</div>
+    <div style="text-align:left;background:#f8fafc;border-radius:12px;padding:16px;margin-bottom:18px">
+      <div style="font-size:12px;font-weight:700;color:#475569;margin-bottom:10px">PRO inkluderer:</div>
+      <div style="font-size:12px;color:#475569;line-height:2">
+        ✅ Etter-skatt formue — se hva du faktisk sitter igjen med<br>
+        ✅ AI-rådgiver — personlige råd basert på porteføljen<br>
+        ✅ Avanserte simuleringer og scenarioer<br>
+        ✅ Salgsanalyse per eiendom med skatteberegning<br>
+        ✅ Skylagring — data synkronisert på tvers av enheter<br>
+        ✅ Eksporter PDF-rapport
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <div style="flex:1;background:#f8fafc;border:2px solid #e2e8f0;border-radius:12px;padding:14px;cursor:pointer" onclick="selectPlan('monthly')" id="plan-monthly">
+        <div style="font-size:11px;color:#64748b;font-weight:700">MÅNEDLIG</div>
+        <div style="font-size:22px;font-weight:900;margin:4px 0">79 kr</div>
+        <div style="font-size:11px;color:#94a3b8">/mnd</div>
+      </div>
+      <div style="flex:1;background:#f0fdf4;border:2px solid #16a34a;border-radius:12px;padding:14px;cursor:pointer;position:relative" onclick="selectPlan('yearly')" id="plan-yearly">
+        <div style="position:absolute;top:-8px;left:50%;transform:translateX(-50%);background:#16a34a;color:#fff;font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px">SPAR 33%</div>
+        <div style="font-size:11px;color:#16a34a;font-weight:700">ÅRLIG</div>
+        <div style="font-size:22px;font-weight:900;margin:4px 0">49 kr</div>
+        <div style="font-size:11px;color:#94a3b8">/mnd (588 kr/år)</div>
+      </div>
+    </div>
+    <button class="btn-green btn-full" style="font-size:16px;padding:14px;border-radius:12px" onclick="startProSubscription()">Oppgrader til Pro</button>
+    <button style="background:none;border:none;color:#94a3b8;font-size:12px;margin-top:12px;cursor:pointer;font-family:inherit" onclick="closePaywall()">Kanskje senere</button>
+  </div>
+</div>
+
 <!-- NAV -->
 
 <nav class="nav">
@@ -622,7 +691,7 @@ const COLS=['#16a34a','#2563eb','#9333ea','#0891b2','#d97706','#e11d48','#0f766e
 const TR=0.22,TS=0.378;
 const DEFAULT_GROWTH=0.04; // 4% annual property appreciation
 let D={properties:[],loans:[],goals:[],savings:[],links:[],incomes:[],budgetSavings:[],expenses:[],notes:'',wealthHistory:[],markets:[]};
-function save(){try{localStorage.setItem(KEY,JSON.stringify(D));}catch(e){}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(D));if(window._userId&&window.cloudSave)window.cloudSave();}catch(e){}}
 function load(){try{const d=localStorage.getItem(KEY);if(d)D={...D,...JSON.parse(d)};
 // Migrate from v7
 if(!d){const v7=localStorage.getItem('wOS_v7');if(v7)D={...D,...JSON.parse(v7)};}
@@ -851,6 +920,21 @@ const grRows=[
 ];
 const grEl=document.getElementById('nwgrow-rows');
 if(grEl)grEl.innerHTML=grRows.map(r=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:12px"><span style="color:#475569">${r.lbl}</span><span style="font-weight:700;color:${r.val>=0?'#16a34a':'#dc2626'}">kr ${fmtK(Math.round(r.val))}</span></div>`).join('')+`<div style="display:flex;justify-content:space-between;padding:10px 0;border-top:2px solid #0f172a;margin-top:4px"><span style="font-weight:800;font-size:13px">Total estimert vekst/år</span><span style="font-weight:900;font-size:15px;color:#16a34a">kr ${fmtK(Math.round(estNWGrowth))} (${(estNWGrowthPct>=0?'+':'')+fmtD(estNWGrowthPct,1)}%)</span></div>`;
+// Growth drivers breakdown
+const gdEl=document.getElementById('growth-drivers');
+if(gdEl){
+const totalGrowth=annRentalCF+annPrincipal+annAppreciation+annInvReturn+t.tbs*12;
+const drivers=[
+{lbl:'💰 Sparing',val:t.tbs*12,desc:'Månedlig sparing × 12'},
+{lbl:'🏘️ Prisvekst',val:annAppreciation,desc:'Eiendomsverdi × 4%'},
+{lbl:'🔑 Avdrag',val:annPrincipal,desc:'Gjeldsnedbet. via terminbeløp'},
+{lbl:'📈 Avkastning',val:annInvReturn,desc:'Aksjer, krypto, bank'},
+{lbl:'🏠 Utleie CF',val:annRentalCF,desc:'Netto etter skatt og kostnader'}
+].filter(d=>d.val!==0).sort((a,b)=>Math.abs(b.val)-Math.abs(a.val));
+gdEl.innerHTML=drivers.map(d=>{
+const pct=totalGrowth?Math.round(Math.abs(d.val)/Math.abs(totalGrowth)*100):0;
+return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="flex-shrink:0;width:120px">${d.lbl}</span><div style="flex:1;height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${d.val>=0?'#16a34a':'#dc2626'};border-radius:4px"></div></div><span style="flex-shrink:0;width:100px;text-align:right;font-weight:700;color:${d.val>=0?'#16a34a':'#dc2626'}">kr ${fmtK(Math.round(d.val))}</span></div>`;
+}).join('');}
 document.getElementById('h-inc').textContent='kr '+fmt(t.ti);
 document.getElementById('h-sr').textContent=fmtD(Math.max(0,t.sr))+'%';
 document.getElementById('nw-pv').textContent='kr '+fmtK(t.pv);
@@ -866,7 +950,18 @@ document.getElementById('s-eq').textContent='kr '+fmtK(t.peR);
 document.getElementById('s-inv').textContent='kr '+fmtK(t.stk+t.cry);
 document.getElementById('s-yield').textContent=fmtD(t.ay)+'%';
 document.getElementById('s-debt').textContent='kr '+fmtK(t.td);
+// After-tax net worth
+const atx=calcAfterTaxNW();
+document.getElementById('nw-accounting').textContent='kr '+fmtK(atx.accountingNW);
+document.getElementById('nw-market').textContent='kr '+fmtK(atx.marketNW);
+document.getElementById('nw-aftertax').textContent='kr '+fmtK(Math.round(atx.afterTaxNW));
+document.getElementById('nw-at-proptax').textContent='− kr '+fmtK(Math.round(atx.propTaxes));
+document.getElementById('nw-at-propcost').textContent='− kr '+fmtK(Math.round(atx.propCosts));
+document.getElementById('nw-at-invtax').textContent='− kr '+fmtK(Math.round(atx.invTax));
+document.getElementById('nw-at-net').textContent='kr '+fmtK(Math.round(atx.afterTaxNW));
 genNextStep(t);genInsights(t);renderAff(t);renderEqAllocation();refreshCharts();
+// Sync to cloud if logged in
+if(window._userId && window._supaClient) cloudSave();
 }
 
 function genNextStep(t){
@@ -965,7 +1060,15 @@ return`<div class="prop-card primary-res"><div class="prop-hdr"><div style="flex
 }
 const cfC=m.cfPost>=0?'good':'bad',yC=m.grossY>=5?'good':m.grossY>=3?'warn':'bad';
 const sb=p.status==='Utleid'?'bdg-green':p.status==='Ledig'?'bdg-red':'bdg-gray';
-return`<div class="prop-card"><div class="prop-hdr"><div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800">${esc(p.name)}</div><div style="font-size:12px;color:#64748b">${esc(p.address||'')}${p.sqm?' — '+p.sqm+' kvm':''}</div>${p.loan?`<div style="font-size:11px;color:#64748b;margin-top:3px">${p.ltype==='serial'?'Serielån':'Annuitetslån'}: kr ${fmtK(p.loan)} — ${p.rate}% — kr ${fmt(Math.round(m.mMort))}/mnd</div>`:''}</div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0"><span class="badge ${sb}">${p.status}</span><button class="btn-del" onclick="delProp(${p.id})" style="color:#ef4444;font-size:12px">× slett</button></div></div><div class="prop-body"><div style="background:${m.cfPost>=0?'linear-gradient(135deg,#f0fdf4,#dcfce7)':'linear-gradient(135deg,#fef2f2,#fee2e2)'};border-radius:12px;padding:13px;margin-bottom:10px;border:1px solid ${m.cfPost>=0?'#16a34a':'#dc2626'}"><div style="font-size:10px;color:${m.cfPost>=0?'#16a34a':'#dc2626'};text-transform:uppercase;font-weight:700;letter-spacing:1px;margin-bottom:3px">⭐ Reell cashflow (inkl. skattefradrag)</div><div style="font-size:20px;font-weight:900;color:${m.cfPost>=0?'#16a34a':'#dc2626'}">kr ${fmt(Math.round(m.cfPost))}/mnd</div><div style="font-size:11px;color:#475569;margin-top:2px">= (leie − drift − terminbeløp) + rentefradrag</div></div><div class="metrics"><div class="metric"><div class="metric-lbl">Brutto yield</div><div class="metric-val ${yC}">${fmtD(m.grossY)}%</div><div class="metric-sub">${m.grossY>=5?'Over markedsnorm':'Under markedsnorm'}</div></div><div class="metric"><div class="metric-lbl">Total ROI etter skatt</div><div class="metric-val ${m.roi>=8?'good':m.roi>=4?'warn':'bad'}">${fmtD(m.roi)}%</div><div class="metric-sub">inkl. avdrag + prisvekst</div></div><div class="metric"><div class="metric-lbl">LTV</div><div class="metric-val ${m.ltv>80?'bad':m.ltv>60?'warn':'good'}">${fmtD(m.ltv)}%</div></div><div class="metric"><div class="metric-lbl">Egenkapital</div><div class="metric-val good">kr ${fmtK(Math.round(m.eq))}</div></div></div><button class="expand-btn" onclick="toggleDet(${p.id},this)">Vis detaljer og rediger</button><div class="prop-det" id="det-${p.id}"><div class="prop-section">Skatteberegning (korrigert)</div><div style="background:#dcfce7;border-radius:8px;padding:9px 12px;font-size:11px;color:#166534;margin-bottom:10px">Skattegrunnlag = leie (kr ${fmt(p.rent)}) − driftskostn. (kr ${fmt(p.expenses)}) − renter (kr ${fmt(Math.round(m.intMonth))}) = kr ${fmt(Math.round(m.taxableR))} × 22% = kr ${fmt(Math.round(m.rTax))}/mnd skatt.<br>Reell cashflow = (leie − drift − terminbeløp) + rentefradrag (kr ${fmt(Math.round(m.taxShield))}/mnd)</div><div class="prop-row"><span class="prop-row-lbl">Cashflow før skattefradrag</span><span class="prop-row-val">kr ${fmt(Math.round(m.cfPre))}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">+ Skattefradrag på renter (22%)</span><span class="prop-row-val good">+ kr ${fmt(Math.round(m.taxShield))}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">= Reell cashflow</span><span class="prop-row-val ${cfC}">kr ${fmt(Math.round(m.cfPost))}/mnd</span></div><div class="prop-section">Formuesbygging (ikke på bankkonto)</div><div class="prop-row"><span class="prop-row-lbl">Avdrag (gjeldsnedbet.)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.principalRepaidAnn))}</span></div><div class="prop-row"><span class="prop-row-lbl">Prisvekst (4%)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.appreciation))}</span></div><div class="prop-row"><span class="prop-row-lbl">Netto leie etter skatt/år</span><span class="prop-row-val ${m.netRentalProfitAnn>=0?'good':'bad'}">kr ${fmtK(Math.round(m.netRentalProfitAnn*(1-TR)))}</span></div><div class="prop-row" style="border-top:2px solid #16a34a;padding-top:10px"><span class="prop-row-lbl"><strong>Total ROI etter skatt</strong></span><span class="prop-row-val good" style="font-size:16px">${fmtD(m.roi)}%</span></div><div class="prop-row"><span class="prop-row-lbl">Skatt salgsgevinst (22%)</span><span class="prop-row-val warn">kr ${fmt(Math.round(m.gainTax))} ved salg</span></div><div class="prop-section">Rediger</div><div class="fi-2col"><div class="fi-group"><label class="fi-label">Nåverdi (kr)</label><input class="fi fnum" type="text" inputmode="decimal" value="${fmt(p.value)}" onfocus="this.value=parseN(this.value)||''" onblur="this.value=fmt(parseN(this.value));updP(${p.id},'value',this.value)" style="margin-bottom:0"/></div><div class="fi-group"><label class="fi-label">Månedlig leie (kr)</label><input class="fi fnum" type="text" inputmode="decimal" value="${fmt(p.rent)}" onfocus="this.value=parseN(this.value)||''" onblur="this.value=fmt(parseN(this.value));updP(${p.id},'rent',this.value)" style="margin-bottom:0"/></div><div class="fi-group"><label class="fi-label">Driftskostn./mnd (kr)</label><input class="fi fnum" type="text" inputmode="decimal" value="${fmt(p.expenses)}" onfocus="this.value=parseN(this.value)||''" onblur="this.value=fmt(parseN(this.value));updP(${p.id},'expenses',this.value)" style="margin-bottom:0"/></div><div class="fi-group"><label class="fi-label">Rente (% p.a.)</label><input class="fi fdec" type="text" inputmode="decimal" value="${p.rate}" onfocus="this.value=parseN(this.value)||''" onblur="const r=parseN(this.value);this.value=r?String(parseFloat(r.toFixed(4))):'';updP(${p.id},'rate',this.value)" style="margin-bottom:0"/></div><div class="fi-group"><label class="fi-label">Restlån (kr)</label><input class="fi fnum" type="text" inputmode="decimal" value="${fmt(p.loan)}" onfocus="this.value=parseN(this.value)||''" onblur="this.value=fmt(parseN(this.value));updP(${p.id},'loan',this.value)" style="margin-bottom:0"/></div><div class="fi-group"><label class="fi-label">Lånetype</label><select class="fi" onchange="updP(${p.id},'ltype',this.value,true)" style="margin-bottom:0"><option value="annuity" ${(p.ltype||'annuity')==='annuity'?'selected':''}>Annuitetslån</option><option value="serial" ${p.ltype==='serial'?'selected':''}>Serielån</option></select></div><div class="fi-group"><label class="fi-label">Status</label><select class="fi" onchange="updP(${p.id},'status',this.value,true)" style="margin-bottom:0"><option ${p.status==='Utleid'?'selected':''}>Utleid</option><option ${p.status==='Ledig'?'selected':''}>Ledig</option></select></div></div></div></div></div>`;
+return`<div class="prop-card"><div class="prop-hdr"><div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800">${esc(p.name)}</div><div style="font-size:12px;color:#64748b">${esc(p.address||'')}${p.sqm?' — '+p.sqm+' kvm':''}</div>${p.loan?`<div style="font-size:11px;color:#64748b;margin-top:3px">${p.ltype==='serial'?'Serielån':'Annuitetslån'}: kr ${fmtK(p.loan)} — ${p.rate}% — kr ${fmt(Math.round(m.mMort))}/mnd</div>`:''}</div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0"><span class="badge ${sb}">${p.status}</span><button class="btn-del" onclick="delProp(${p.id})" style="color:#ef4444;font-size:12px">× slett</button></div></div><div class="prop-body"><div style="background:${m.cfPost>=0?'linear-gradient(135deg,#f0fdf4,#dcfce7)':'linear-gradient(135deg,#fef2f2,#fee2e2)'};border-radius:12px;padding:13px;margin-bottom:10px;border:1px solid ${m.cfPost>=0?'#16a34a':'#dc2626'}"><div style="font-size:10px;color:${m.cfPost>=0?'#16a34a':'#dc2626'};text-transform:uppercase;font-weight:700;letter-spacing:1px;margin-bottom:3px">⭐ Reell cashflow (inkl. skattefradrag)</div><div style="font-size:20px;font-weight:900;color:${m.cfPost>=0?'#16a34a':'#dc2626'}">kr ${fmt(Math.round(m.cfPost))}/mnd</div><div style="font-size:11px;color:#475569;margin-top:2px">= (leie − drift − terminbeløp) + rentefradrag</div></div><div class="metrics"><div class="metric"><div class="metric-lbl">Brutto yield</div><div class="metric-val ${yC}">${fmtD(m.grossY)}%</div><div class="metric-sub">${m.grossY>=5?'Over markedsnorm':'Under markedsnorm'}</div></div><div class="metric"><div class="metric-lbl">Total ROI etter skatt</div><div class="metric-val ${m.roi>=8?'good':m.roi>=4?'warn':'bad'}">${fmtD(m.roi)}%</div><div class="metric-sub">inkl. avdrag + prisvekst</div></div><div class="metric"><div class="metric-lbl">LTV</div><div class="metric-val ${m.ltv>80?'bad':m.ltv>60?'warn':'good'}">${fmtD(m.ltv)}%</div></div><div class="metric"><div class="metric-lbl">Egenkapital</div><div class="metric-val good">kr ${fmtK(Math.round(m.eq))}</div></div></div><button class="expand-btn" onclick="toggleDet(${p.id},this)">Vis detaljer og rediger</button><div class="prop-det" id="det-${p.id}"><div class="prop-section">Skatteberegning (korrigert)</div><div style="background:#dcfce7;border-radius:8px;padding:9px 12px;font-size:11px;color:#166534;margin-bottom:10px">Skattegrunnlag = leie (kr ${fmt(p.rent)}) − driftskostn. (kr ${fmt(p.expenses)}) − renter (kr ${fmt(Math.round(m.intMonth))}) = kr ${fmt(Math.round(m.taxableR))} × 22% = kr ${fmt(Math.round(m.rTax))}/mnd skatt.<br>Reell cashflow = (leie − drift − terminbeløp) + rentefradrag (kr ${fmt(Math.round(m.taxShield))}/mnd)</div><div class="prop-row"><span class="prop-row-lbl">Cashflow før skattefradrag</span><span class="prop-row-val">kr ${fmt(Math.round(m.cfPre))}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">+ Skattefradrag på renter (22%)</span><span class="prop-row-val good">+ kr ${fmt(Math.round(m.taxShield))}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">= Reell cashflow</span><span class="prop-row-val ${cfC}">kr ${fmt(Math.round(m.cfPost))}/mnd</span></div><div class="prop-section">Formuesbygging (ikke på bankkonto)</div><div class="prop-row"><span class="prop-row-lbl">Avdrag (gjeldsnedbet.)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.principalRepaidAnn))}</span></div><div class="prop-row"><span class="prop-row-lbl">Prisvekst (4%)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.appreciation))}</span></div><div class="prop-row"><span class="prop-row-lbl">Netto leie etter skatt/år</span><span class="prop-row-val ${m.netRentalProfitAnn>=0?'good':'bad'}">kr ${fmtK(Math.round(m.netRentalProfitAnn*(1-TR)))}</span></div><div class="prop-row" style="border-top:2px solid #16a34a;padding-top:10px"><span class="prop-row-lbl"><strong>Total ROI etter skatt</strong></span><span class="prop-row-val good" style="font-size:16px">${fmtD(m.roi)}%</span></div><div class="prop-section">Salgsanalyse — hva sitter du igjen med?</div>
+${(()=>{const sat=calcPropertyAfterTax(p);return `
+<div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border-radius:10px;padding:12px;margin-bottom:8px;border:1px solid #bbf7d0">
+<div class="prop-row"><span class="prop-row-lbl">Markedsverdi</span><span class="prop-row-val">kr ${fmtK(Math.round(sat.val))}</span></div>
+<div class="prop-row"><span class="prop-row-lbl">− Restlån</span><span class="prop-row-val bad">− kr ${fmtK(Math.round(sat.loan))}</span></div>
+<div class="prop-row"><span class="prop-row-lbl">− Est. skatt (${p.proptype==='primary'?'fritatt':'22% av gevinst kr '+fmtK(Math.round(sat.gain))})</span><span class="prop-row-val ${sat.tax>0?'bad':'good'}">${sat.tax>0?'− ':''} kr ${fmtK(Math.round(sat.tax))}</span></div>
+<div class="prop-row"><span class="prop-row-lbl">− Salgskostnader (~2.5%)</span><span class="prop-row-val bad">− kr ${fmtK(Math.round(sat.sellingCost))}</span></div>
+<div class="prop-row" style="border-top:2px solid #16a34a;padding-top:10px;margin-top:4px"><span class="prop-row-lbl"><strong>Netto utbetalt ved salg</strong></span><span class="prop-row-val good" style="font-size:16px">kr ${fmtK(Math.round(sat.netProceeds))}</span></div>
+</div>`;})()}<div class="prop-section">Rediger</div><div class="fi-2col"><div class="fi-group"><label class="fi-label">Nåverdi (kr)</label><input class="fi fnum" type="text" inputmode="decimal" value="${fmt(p.value)}" onfocus="this.value=parseN(this.value)||''" onblur="this.value=fmt(parseN(this.value));updP(${p.id},'value',this.value)" style="margin-bottom:0"/></div><div class="fi-group"><label class="fi-label">Månedlig leie (kr)</label><input class="fi fnum" type="text" inputmode="decimal" value="${fmt(p.rent)}" onfocus="this.value=parseN(this.value)||''" onblur="this.value=fmt(parseN(this.value));updP(${p.id},'rent',this.value)" style="margin-bottom:0"/></div><div class="fi-group"><label class="fi-label">Driftskostn./mnd (kr)</label><input class="fi fnum" type="text" inputmode="decimal" value="${fmt(p.expenses)}" onfocus="this.value=parseN(this.value)||''" onblur="this.value=fmt(parseN(this.value));updP(${p.id},'expenses',this.value)" style="margin-bottom:0"/></div><div class="fi-group"><label class="fi-label">Rente (% p.a.)</label><input class="fi fdec" type="text" inputmode="decimal" value="${p.rate}" onfocus="this.value=parseN(this.value)||''" onblur="const r=parseN(this.value);this.value=r?String(parseFloat(r.toFixed(4))):'';updP(${p.id},'rate',this.value)" style="margin-bottom:0"/></div><div class="fi-group"><label class="fi-label">Restlån (kr)</label><input class="fi fnum" type="text" inputmode="decimal" value="${fmt(p.loan)}" onfocus="this.value=parseN(this.value)||''" onblur="this.value=fmt(parseN(this.value));updP(${p.id},'loan',this.value)" style="margin-bottom:0"/></div><div class="fi-group"><label class="fi-label">Lånetype</label><select class="fi" onchange="updP(${p.id},'ltype',this.value,true)" style="margin-bottom:0"><option value="annuity" ${(p.ltype||'annuity')==='annuity'?'selected':''}>Annuitetslån</option><option value="serial" ${p.ltype==='serial'?'selected':''}>Serielån</option></select></div><div class="fi-group"><label class="fi-label">Status</label><select class="fi" onchange="updP(${p.id},'status',this.value,true)" style="margin-bottom:0"><option ${p.status==='Utleid'?'selected':''}>Utleid</option><option ${p.status==='Ledig'?'selected':''}>Ledig</option></select></div></div></div></div></div>`;
 }).join('');
 initFmt();
 }
@@ -1010,6 +1113,7 @@ document.getElementById('ar').innerHTML=`<div class="analyzer-result"><div class
 // ██ FIX #4: SIMULATION — Bank vs Net Worth separated
 // ══════════════════════════════════════════════════════════════
 function runSim(){
+if(!requirePro('Avansert simulering')) return;
 const t=tots();
 const start=gv('sim-start')||t.nw||0;
 const bankMon=gv('sim-bank')||0,stkMon=gv('sim-stk')||0,cryMon=gv('sim-cry')||0;
@@ -1087,6 +1191,7 @@ setTimeout(()=>{const ctx=document.getElementById('simC');if(!ctx)return;if(C.si
 
 // ── SCENARIOS ──
 function runSc(){
+if(!requirePro('Scenariokomparing')) return;
 const yrs=gv('sc-yrs')||10,cap=gv('sc-cap')||10000,pg=gv('sc-pg')||4,sg=gv('sc-sg')||7;
 const t=tots(),base=t.nw||0;
 const sc=[
@@ -1271,7 +1376,48 @@ MÅL: ${D.goals.map(g=>`${g.name} (kr ${fmtK(g.target)})`).join(', ')||'Ingen'}
 
 VIKTIG: Reell cashflow = (leie - drift - terminbeløp) + rentefradrag (22% av renter). Renter ER fradragsberettiget i norsk utleiebeskatning. ROI inkluderer netto leie etter skatt + avdrag (gjeldsnedbet.) + prisvekst (4%/år). Bankkonto øker KUN med netto cashflow. Formue øker også via avdrag og prisvekst.`;
 }
-async function sendChat(){const input=document.getElementById('chat-input');const msg=input.value.trim();if(!msg)return;input.value='';document.getElementById('chat-sugs').style.display='none';addMsg('user',msg);chatHistory.push({role:'user',content:msg});const loadId=addMsg('ai','Analyserer porteføljen din…',true);try{const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:buildContext(),messages:chatHistory})});const data=await res.json();const text=data.content?.[0]?.text||'Beklager, klarte ikke svare. Prøv igjen.';chatHistory.push({role:'assistant',content:text});updateMsg(loadId,text);}catch(e){updateMsg(loadId,'Noe gikk galt. Sjekk internettforbindelsen.');}}
+async function sendChat(){
+if(!requirePro('AI-rådgiver')) return;
+const input=document.getElementById('chat-input');const msg=input.value.trim();if(!msg)return;input.value='';document.getElementById('chat-sugs').style.display='none';addMsg('user',msg);chatHistory.push({role:'user',content:msg});const loadId=addMsg('ai','Analyserer porteføljen din…',true);
+try{
+// Try Supabase Edge Function proxy first (recommended for production)
+let text = null;
+if(window._supaClient && window._userId) {
+  try {
+    const { data, error } = await window._supaClient.functions.invoke('ai-chat', {
+      body: { system: buildContext(), messages: chatHistory }
+    });
+    if(!error && data && data.text) text = data.text;
+  } catch(e) { /* fallback below */ }
+}
+// Fallback: generate local insights based on data
+if(!text) text = generateLocalResponse(msg);
+chatHistory.push({role:'assistant',content:text});updateMsg(loadId,text);
+}catch(e){updateMsg(loadId,'Noe gikk galt. Prøv igjen.');}}
+
+function generateLocalResponse(msg){
+const t=tots(), lc=msg.toLowerCase();
+const atx=calcAfterTaxNW();
+if(lc.includes('formue')||lc.includes('netto')||lc.includes('verdi')){
+return `📊 Din formuesoversikt:\n\n• Regnskapsmessig netto formue: kr ${fmtK(t.nw)}\n• Etter skatt og salgskostnader: kr ${fmtK(Math.round(atx.afterTaxNW))}\n• Forskjellen (kr ${fmtK(Math.round(t.nw - atx.afterTaxNW))}) er estimert skatt og kostnader ved realisering.\n\n${t.rentalCf>=0?'Utleieporteføljen din genererer positiv cashflow på kr '+fmt(Math.round(t.rentalCf))+'/mnd etter skattefradrag.':'Utleie-cashflow er negativ (kr '+fmt(Math.round(t.rentalCf))+'/mnd). Vurder leieøkning eller refinansiering.'}`;}
+if(lc.includes('kjøpe')||lc.includes('eiendom')||lc.includes('investering')){
+return `🏘️ Kjøpeevne-analyse:\n\n• Tilgjengelig EK: kr ${fmtK(Math.round(t.totalAvailable))}\n• Med 15% EK-krav kan du kjøpe for: kr ${fmtK(Math.round(t.totalAvailable/0.15))}\n• Nåværende reell cashflow: kr ${fmt(Math.round(t.rentalCf))}/mnd\n\n${t.totalAvailable>300000?'Du har nok EK til å vurdere neste kjøp. Bruk Kjøpsanalysen for å simulere.':'Bygg opp mer EK før neste kjøp. Fokuser på sparing og nedbetaling.'}`;}
+if(lc.includes('skatt')||lc.includes('fradrag')){
+return `💼 Skatteinfo (Norge):\n\n• Utleieskatt: 22% av (leie − driftskostn. − renter)\n• Renteskattefradrag: kr ${fmt(Math.round(t.intTaxRed*12))}/år tilbake\n• Aksjer/fond: 37.8% gevinstskatt (aksjerabatt)\n• Primærbolig: Skattefri gevinst ved salg (bodd >1 år)\n\nDine eiendommer:\n${t.rentals.map(p=>{const m=propM(p);return `• ${p.name}: skattbart kr ${fmt(Math.round(m.taxableR))}/mnd → skatt kr ${fmt(Math.round(m.rTax))}/mnd`;}).join('\n')}`;}
+if(lc.includes('frihet')||lc.includes('fri')||lc.includes('pensjon')){
+const passive=t.rentalCf+(t.stk+t.cry)*0.07*(1-TS)/12+t.bnk*0.03/12;
+return `🏝️ Finansiell frihet:\n\n• Passiv inntekt nå: kr ${fmt(Math.round(passive))}/mnd\n  - Utleie (netto): kr ${fmt(Math.round(t.rentalCf))}/mnd\n  - Investeringer: kr ${fmt(Math.round((t.stk+t.cry)*0.07*(1-TS)/12))}/mnd\n  - Bank: kr ${fmt(Math.round(t.bnk*0.03/12))}/mnd\n\n• 4%-regelen: Med kr ${fmtK(t.nw)} i formue kan du bruke ~kr ${fmt(Math.round(t.nw*0.04/12))}/mnd.\n\nTips: Bygg både eiendom (cashflow) og indeksfond (vekst) parallelt.`;}
+if(lc.includes('portefølje')||lc.includes('analyser')||lc.includes('hva bør')){
+const ltv=t.pv?(t.pd/t.pv*100):0;
+let tips=[];
+if(t.rentalCf>0&&t.totalAvailable>300000) tips.push('✅ Positiv cashflow + fri EK = klar for neste eiendom');
+if(t.sr<15&&t.ti>0) tips.push('⚠️ Sparegrad '+fmtD(t.sr)+'% er lav — mål 20%+');
+if(ltv>75) tips.push('⚠️ Belåningsgrad '+Math.round(ltv)+'% — vurder nedbetaling');
+if(t.ay>=5) tips.push('✅ Yield '+fmtD(t.ay)+'% — over markedsnorm');
+if(t.bnk>t.nw*0.3) tips.push('💡 Mye kontanter i bank — vurder investering for høyere avkastning');
+return `🤖 Porteføljeanalyse:\n\n${tips.length?tips.join('\n'):'Legg inn mer data for bedre analyse.'}\n\n📊 Nøkkeltall:\n• Netto formue: kr ${fmtK(t.nw)}\n• Etter skatt: kr ${fmtK(Math.round(atx.afterTaxNW))}\n• Cashflow: kr ${fmt(Math.round(t.rentalCf))}/mnd\n• Tilgjengelig EK: kr ${fmtK(Math.round(t.totalAvailable))}`;}
+return `Takk for spørsmålet! Her er en oversikt:\n\n📊 Netto formue: kr ${fmtK(t.nw)} (kr ${fmtK(Math.round(atx.afterTaxNW))} etter skatt)\n💰 Cashflow: kr ${fmt(Math.round(t.rentalCf))}/mnd\n🏘️ ${D.properties.length} eiendommer, ${t.rentals.length} utleie\n📈 Yield: ${fmtD(t.ay)}%\n\nPrøv å spørre om: porteføljeanalyse, skattetips, kjøpeevne, eller finansiell frihet.`;
+}
 function sendSug(btn){document.getElementById('chat-input').value=btn.textContent;sendChat();}
 function addMsg(role,text,loading=false){const msgs=document.getElementById('chat-msgs');const id='m'+Date.now();const div=document.createElement('div');div.className='msg '+role+(loading?' loading':'');div.id=id;div.textContent=text;msgs.appendChild(div);msgs.scrollTop=msgs.scrollHeight;return id;}
 function updateMsg(id,text){const el=document.getElementById(id);if(el){el.textContent=text;el.classList.remove('loading');}document.getElementById('chat-msgs').scrollTop=99999;}
@@ -1304,58 +1450,9 @@ function navTo(name){document.querySelectorAll('.page').forEach(p=>p.classList.r
 function showTab(id,btn){['t-buy','t-sim','t-sc','t-mc','t-mkt'].forEach(t=>{const el=document.getElementById(t);if(el)el.style.display=t===id?'block':'none';});document.querySelectorAll('.inner-tab').forEach(b=>b.classList.remove('on'));btn.classList.add('on');}
 function toggleForm(id){document.getElementById(id).classList.toggle('open');}
 
-// ── LOGIN / PROFILE (visual only) ──
+// ── LOGIN / PROFILE — stubs overridden by module script ──
 function toggleSignup(){const l=document.getElementById('login-form-area'),s=document.getElementById('signup-form-area');if(l.style.display==='none'){l.style.display='block';s.style.display='none';}else{l.style.display='none';s.style.display='block';}}
-async function doLogin(){
-  const email = document.getElementById('login-email').value.trim();
-  const pass = document.getElementById('login-pass').value;
-
-  if(!email || !pass){
-    alert('Fyll inn e-post og passord.');
-    return;
-  }
-
-  const { data, error } = await client.auth.signInWithPassword({
-    email: email,
-    password: pass
-  });
-
-  if(error){
-    alert("Feil: " + error.message);
-  } else {
-    alert("Innlogget!");
-
-    const profile = {
-      name: email.split('@')[0],
-      email,
-      loggedIn: true,
-      since: new Date().toLocaleDateString('nb-NO',{month:'short',year:'numeric'})
-    };
-
-    showProfile(profile);
-  }
-}
-function doSignup(){
-const name=document.getElementById('signup-name').value.trim();
-const email=document.getElementById('signup-email').value.trim();
-const pass=document.getElementById('signup-pass').value;
-const pass2=document.getElementById('signup-pass2').value;
-if(!name||!email||!pass){alert('Fyll inn alle felt.');return;}
-if(pass!==pass2){alert('Passordene stemmer ikke overens.');return;}
-const profile={name,email,loggedIn:true,since:new Date().toLocaleDateString('nb-NO',{month:'short',year:'numeric'})};
-localStorage.setItem('wOS_profile',JSON.stringify(profile));
-showProfile(profile);
-}
-function doLogout(){
-localStorage.removeItem('wOS_profile');
-document.getElementById('login-form-area').style.display='block';
-document.getElementById('signup-form-area').style.display='none';
-document.getElementById('profile-area').style.display='none';
-document.getElementById('profile-name-display').textContent='Ikke logget inn';
-document.getElementById('profile-email-display').textContent='Logg inn for å synkronisere';
-document.getElementById('login-email').value='';
-document.getElementById('login-pass').value='';
-}
+// doLogin, doSignup, doLogout defined in module script (Supabase)
 function showProfile(p){
 document.getElementById('login-form-area').style.display='none';
 document.getElementById('signup-form-area').style.display='none';
@@ -1364,8 +1461,69 @@ document.getElementById('profile-name-display').textContent=p.name;
 document.getElementById('profile-email-display').textContent=p.email;
 document.getElementById('profile-since').textContent=p.since||'—';
 document.getElementById('profile-lastsave').textContent=new Date().toLocaleTimeString('nb-NO',{hour:'2-digit',minute:'2-digit'})+' i dag';
+// Update pro badge
+const proStatus = p.is_pro;
+document.getElementById('profile-pro-status').textContent = proStatus ? 'PRO' : 'GRATIS';
+document.getElementById('profile-pro-status').style.color = proStatus ? '#16a34a' : '#64748b';
+window._userPro = !!proStatus;
+window._userId = p.user_id || null;
+updateProUI();
 }
 function loadProfile(){try{const p=JSON.parse(localStorage.getItem('wOS_profile'));if(p&&p.loggedIn)showProfile(p);}catch(e){}}
+// ── PRO FEATURE GATING ──
+window._userPro = false;
+window._userId = null;
+function requirePro(featureName){
+if(window._userPro) return true;
+document.getElementById('paywall-modal').style.display='flex';
+document.getElementById('paywall-feature').textContent=featureName||'Denne funksjonen';
+return false;
+}
+function closePaywall(){document.getElementById('paywall-modal').style.display='none';}
+function updateProUI(){
+document.querySelectorAll('.pro-lock').forEach(el=>{
+el.style.display=window._userPro?'none':'flex';
+});
+document.querySelectorAll('.pro-content').forEach(el=>{
+el.style.filter=window._userPro?'none':'blur(4px)';
+el.style.pointerEvents=window._userPro?'auto':'none';
+});
+}
+// ── AFTER-TAX NET WORTH ──
+function calcAfterTaxNW(){
+const t=tots();
+let totalAssets=t.pv+t.tsav;
+let totalLiabilities=t.td;
+// Property sale taxes and costs
+let propTaxes=0, propCosts=0;
+D.properties.forEach(p=>{
+const val=p.value||p.purchase||0;
+const purchase=p.purchase||0;
+const gain=Math.max(0,val-purchase);
+// Primary residence: tax-free if lived >1 year in Norway
+const tax = p.proptype==='primary' ? 0 : gain * TR;
+const sellingCost = val * 0.025; // ~2.5% agent + doc fees
+propTaxes += tax;
+propCosts += sellingCost;
+});
+// Investment taxes
+const stkGain = D.savings.filter(a=>a.type==='stocks').reduce((s,a)=>s+(+a.amount||0),0) * 0.3; // assume 30% is gain
+const cryGain = D.savings.filter(a=>a.type==='crypto').reduce((s,a)=>s+(+a.amount||0),0) * 0.4; // assume 40% is gain
+const invTax = stkGain * TS + cryGain * TS;
+const accountingNW = totalAssets - totalLiabilities;
+const marketNW = accountingNW; // same when using market values (which we already do)
+const afterTaxNW = totalAssets - propTaxes - propCosts - invTax - totalLiabilities;
+return { accountingNW, marketNW, afterTaxNW, propTaxes, propCosts, invTax, totalTax: propTaxes+invTax, totalCosts: propCosts };
+}
+function calcPropertyAfterTax(p){
+const val=p.value||p.purchase||0;
+const purchase=p.purchase||0;
+const gain=Math.max(0,val-purchase);
+const tax = p.proptype==='primary' ? 0 : gain * TR;
+const sellingCost = val * 0.025;
+const netProceeds = val - (p.loan||0) - tax - sellingCost;
+return { val, loan: p.loan||0, gain, tax, sellingCost, netProceeds };
+}
 
 // ── INIT ──
 window.addEventListener('DOMContentLoaded',()=>{
@@ -1386,32 +1544,91 @@ updateAll();
   const supabaseUrl = "https://enyjvqsiisjgshhhahjy.supabase.co";
   const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVueWp2cXNpaXNqZ3NoaGhhaGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyMDkzMzEsImV4cCI6MjA5MDc4NTMzMX0.an0cHuOTrTnotUBM8e-vWiIB7gNYkLP7QJd5D0K0YE0";
   const client = createClient(supabaseUrl, supabaseKey);
+  window._supaClient = client;
 
-  // Expose functions globally for onclick attributes
+  // ── CLOUD DATA SYNC ──
+  let _syncTimer = null;
+  window.cloudSave = async () => {
+    if(!window._userId) return;
+    clearTimeout(_syncTimer);
+    _syncTimer = setTimeout(async () => {
+      try {
+        const payload = {
+          user_id: window._userId,
+          app_data: JSON.stringify(window.D),
+          updated_at: new Date().toISOString()
+        };
+        const { error } = await client.from('user_data').upsert(payload, { onConflict: 'user_id' });
+        if(error) console.warn('Cloud save error:', error.message);
+        else {
+          const el = document.getElementById('profile-lastsave');
+          if(el) el.textContent = new Date().toLocaleTimeString('nb-NO',{hour:'2-digit',minute:'2-digit'}) + ' i dag';
+        }
+      } catch(e) { console.warn('Cloud save failed:', e); }
+    }, 2000); // debounce 2s
+  };
+
+  async function cloudLoad(userId) {
+    try {
+      const { data, error } = await client.from('user_data').select('app_data').eq('user_id', userId).single();
+      if(error) { console.warn('Cloud load error:', error.message); return null; }
+      if(data && data.app_data) return JSON.parse(data.app_data);
+    } catch(e) { console.warn('Cloud load failed:', e); }
+    return null;
+  }
+
+  // ── AUTH FUNCTIONS ──
+  async function handleAuthSuccess(user, name) {
+    const profile = {
+      name: name || user.email.split('@')[0],
+      email: user.email,
+      user_id: user.id,
+      loggedIn: true,
+      is_pro: false, // check from DB
+      since: new Date(user.created_at || Date.now()).toLocaleDateString('nb-NO',{month:'short',year:'numeric'})
+    };
+    // Check pro status
+    try {
+      const { data } = await client.from('subscriptions').select('is_active').eq('user_id', user.id).single();
+      if(data && data.is_active) profile.is_pro = true;
+    } catch(e) {}
+    localStorage.setItem('wOS_profile', JSON.stringify(profile));
+    window.showProfile(profile);
+    // Load cloud data and merge
+    const cloudData = await cloudLoad(user.id);
+    if(cloudData) {
+      // If cloud has data and local is empty, use cloud. Otherwise merge.
+      const localHasData = window.D.properties.length > 0 || window.D.savings.length > 0 || window.D.incomes.length > 0;
+      if(!localHasData || confirm('Skylagrede data funnet. Vil du laste inn fra skyen? (Overskriver lokale data)')) {
+        window.D = {...window.D, ...cloudData};
+        window.save();
+        // Re-render everything
+        window.renderProps(); window.renderLoans(); window.renderGoals();
+        window.renderSavings && window.renderSavings();
+        window.renderLinks && window.renderLinks('all');
+        window.renderMkt && window.renderMkt();
+        window.renderBudget && window.renderBudget();
+        window.updateAll();
+      }
+    }
+  }
+
   window.doLogin = async () => {
     const email = document.getElementById("login-email").value.trim();
     const pass = document.getElementById("login-pass").value;
+    if(!email || !pass) { alert("Fyll inn e-post og passord."); return; }
 
-    if(!email || !pass){
-      alert("Fyll inn e-post og passord.");
-      return;
-    }
+    const btn = document.querySelector('#login-form-area .btn-green');
+    if(btn) { btn.textContent = 'Logger inn...'; btn.disabled = true; }
 
-    const { data, error } = await client.auth.signInWithPassword({
-      email: email,
-      password: pass
-    });
+    const { data, error } = await client.auth.signInWithPassword({ email, password: pass });
 
-    if(error){
+    if(btn) { btn.textContent = 'Logg inn'; btn.disabled = false; }
+
+    if(error) {
       alert("Feil: " + error.message);
     } else {
-      alert("Innlogget!");
-
-      showProfile({
-        name: email.split("@")[0],
-        email,
-        since: new Date().toLocaleDateString("nb-NO",{month:"short",year:"numeric"})
-      });
+      await handleAuthSuccess(data.user);
     }
   };
 
@@ -1420,28 +1637,90 @@ updateAll();
     const email = document.getElementById("signup-email").value.trim();
     const pass = document.getElementById("signup-pass").value;
     const pass2 = document.getElementById("signup-pass2").value;
+    if(!name || !email || !pass) { alert("Fyll inn alle felt."); return; }
+    if(pass !== pass2) { alert("Passordene stemmer ikke."); return; }
+    if(pass.length < 6) { alert("Passord må være minst 6 tegn."); return; }
 
-    if(!name || !email || !pass){
-      alert("Fyll inn alle felt.");
-      return;
-    }
+    const btn = document.querySelector('#signup-form-area .btn-green');
+    if(btn) { btn.textContent = 'Oppretter...'; btn.disabled = true; }
 
-    if(pass !== pass2){
-      alert("Passordene stemmer ikke.");
-      return;
-    }
+    const { data, error } = await client.auth.signUp({ email, password: pass, options: { data: { full_name: name } } });
 
-    const { data, error } = await client.auth.signUp({
-      email: email,
-      password: pass
-    });
+    if(btn) { btn.textContent = 'Opprett konto'; btn.disabled = false; }
 
-    if(error){
+    if(error) {
       alert("Feil: " + error.message);
+    } else if(data.user && !data.user.confirmed_at && data.user.identities?.length === 0) {
+      alert("En bruker med denne e-posten finnes allerede.");
+    } else if(data.session) {
+      await handleAuthSuccess(data.user, name);
     } else {
-      alert("Bruker opprettet!");
+      alert("Sjekk e-posten din for bekreftelseslenke!");
     }
   };
+
+  window.doLogout = async () => {
+    await client.auth.signOut();
+    localStorage.removeItem('wOS_profile');
+    window._userId = null;
+    window._userPro = false;
+    document.getElementById('login-form-area').style.display='block';
+    document.getElementById('signup-form-area').style.display='none';
+    document.getElementById('profile-area').style.display='none';
+    document.getElementById('profile-name-display').textContent='Ikke logget inn';
+    document.getElementById('profile-email-display').textContent='Logg inn for å synkronisere';
+    document.getElementById('login-email').value='';
+    document.getElementById('login-pass').value='';
+    window.updateProUI();
+  };
+
+  // ── PRO SUBSCRIPTION ──
+  window._selectedPlan = 'yearly';
+  window.selectPlan = (plan) => {
+    window._selectedPlan = plan;
+    document.getElementById('plan-monthly').style.borderColor = plan==='monthly' ? '#16a34a' : '#e2e8f0';
+    document.getElementById('plan-monthly').style.background = plan==='monthly' ? '#f0fdf4' : '#f8fafc';
+    document.getElementById('plan-yearly').style.borderColor = plan==='yearly' ? '#16a34a' : '#e2e8f0';
+    document.getElementById('plan-yearly').style.background = plan==='yearly' ? '#f0fdf4' : '#f8fafc';
+  };
+  window.startProSubscription = async () => {
+    if(!window._userId) { alert('Du må logge inn først.'); window.closePaywall(); window.navTo('more'); return; }
+    // In production, integrate Stripe/Vipps here.
+    // For now, activate pro directly for demo.
+    try {
+      await client.from('subscriptions').upsert({
+        user_id: window._userId,
+        plan: window._selectedPlan,
+        is_active: true,
+        started_at: new Date().toISOString()
+      }, { onConflict: 'user_id' });
+    } catch(e) {}
+    window._userPro = true;
+    window.updateProUI();
+    window.closePaywall();
+    // Update stored profile
+    try {
+      const p = JSON.parse(localStorage.getItem('wOS_profile'));
+      if(p) { p.is_pro = true; localStorage.setItem('wOS_profile', JSON.stringify(p)); window.showProfile(p); }
+    } catch(e) {}
+    alert('🎉 Velkommen til WealthOS Pro!');
+  };
+
+  // ── SESSION RESTORE ──
+  const { data: { session } } = await client.auth.getSession();
+  if(session && session.user) {
+    await handleAuthSuccess(session.user);
+  }
+
+  // Listen for auth state changes
+  client.auth.onAuthStateChange(async (event, session) => {
+    if(event === 'SIGNED_IN' && session?.user) {
+      await handleAuthSuccess(session.user);
+    } else if(event === 'SIGNED_OUT') {
+      window._userId = null;
+      window._userPro = false;
+    }
+  });
 </script>
 </body>
 </html>
