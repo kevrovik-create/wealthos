@@ -1387,31 +1387,32 @@ const client = supabase.createClient(
   "https://envjvqsiisjgshhhahjy.supabase.co",
   "sb_publishable_l_oy4l07F6qEDQS5BgVG6Q_6PaeGhre"
 );
+async function doLogin(){
+  const email = document.getElementById('login-email').value.trim();
+  const pass = document.getElementById('login-pass').value;
 
-async function signUp(email, password) {
-  const { data, error } = await client.auth.signUp({
+  if(!email || !pass){
+    alert('Fyll inn e-post og passord.');
+    return;
+  }
+
+  const { data, error } = await client.auth.signInWithPassword({
     email: email,
-    password: password
+    password: pass
   });
 
-  if (error) {
-    alert("Error: " + error.message);
+  if(error){
+    alert("Feil: " + error.message);
   } else {
-    alert("User created!");
+    alert("Innlogget!");
+    showProfile({
+      name: email.split('@')[0],
+      email,
+      since: new Date().toLocaleDateString('nb-NO',{month:'short',year:'numeric'})
+    });
   }
 }
 
-async function login(email, password) {
-  const { data, error } = await client.auth.signInWithPassword({
-    email: email,
-    password: password
-  });
-
-  if (error) {
-    alert("Error: " + error.message);
-  } else {
-    alert("Logged in!");
-  }
 </script>
   
 </body>
