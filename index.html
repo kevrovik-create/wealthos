@@ -285,7 +285,7 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
         <div class="fi-group"><label class="fi-label">Månedlig leie (kr)</label><input class="fi fnum" id="pf-rent" type="text" inputmode="decimal" placeholder="0"/></div>
         <div class="fi-group"><label class="fi-label">Driftskostnader/mnd (kr)</label><input class="fi fnum" id="pf-exp" type="text" inputmode="decimal" placeholder="fellesutg. etc."/></div>
       </div>
-      <div style="background:#dcfce7;border-radius:8px;padding:9px 12px;font-size:11px;color:#166534;margin-bottom:9px">💡 Skatt 22% på: leie − driftskostnader − rentekostnader. Rentene ER fradragsberettiget i norsk utleiebeskatning.</div>
+      <div style="background:#dcfce7;border-radius:8px;padding:9px 12px;font-size:11px;color:#166534;margin-bottom:9px">💡 Skatt: 22% av (leie − driftskostnader). Renter gir separat skattefradrag (22%) på personlig inntektsskatt.</div>
     </div>
     <div id="pf-primary-fields" style="display:none">
       <div class="form-section">Primærbolig — ingen leieinntekt</div>
@@ -741,12 +741,13 @@ return{avg:m,first:m,last:m,totalInt:m*n-P,principalPerYear,type:'annuity'};
 }
 
 // ══════════════════════════════════════════════════════════════
-// ██ FIX #1 & #2 & #3: CORRECTED PROPERTY METRICS
+// ██ CORRECTED PROPERTY METRICS — Norwegian tax rules
 // ══════════════════════════════════════════════════════════════
-// SPEC CHANGES:
-//   1. Tax: taxable = rent - expenses - INTEREST (interest IS deductible)
-//   2. Real Cash Flow = (rent - expenses - mortgage) + (interest * 0.22) [tax shield]
-//   3. ROI = ((netRentalProfit * 0.78) + principalRepaid + appreciation) / initialEK
+// CORRECT FORMULAS:
+//   1. Rental tax = 22% × (rent − expenses). Interest is NOT deducted from rental income.
+//   2. Net cashflow = rent − expenses − rental tax (what you actually pocket from the rental)
+//   3. Interest deduction = 22% of interest per year — separate personal tax benefit
+//   4. ROI = (net rental after tax + principal repaid + appreciation) / initial EK
 // ══════════════════════════════════════════════════════════════
 function propM(p){
 const isR=p.proptype!=='primary';
@@ -755,35 +756,41 @@ const mMort=loan.avg; // full monthly payment (interest + principal)
 const intMonth=(p.loan||0)*(p.rate||0)/100/12; // monthly interest portion
 const principalMonth=mMort-intMonth; // monthly principal portion
 
-// ── FIX #1: TAX — Interest IS now deducted from taxable income ──
-// Taxable = Rent - Operating Expenses - Interest
-const taxableR=isR?Math.max(0,(p.rent||0)-(p.expenses||0)-intMonth):0;
-const rTax=taxableR*TR; // 22% rental tax
+// ── RENTAL TAX — 22% of (rent − expenses). Interest NOT deducted from rental. ──
+const taxableR=isR?Math.max(0,(p.rent||0)-(p.expenses||0)):0;
+const rTax=taxableR*TR; // 22% rental tax per month
 
-// ── FIX #2: REAL CASH FLOW — includes tax shield ──
-// Real Cash Flow = (Rent - Expenses - Full Mortgage) + (Interest * 0.22)
-// The second part is the "salary bonus" from the state
-const taxShield=intMonth*TR; // interest tax deduction benefit
-const cfPre=isR?(p.rent||0)-(p.expenses||0)-mMort:-(p.hcost||0)-mMort;
-const cfPost=isR?cfPre+taxShield:cfPre; // real cash flow after tax shield
+// ── NET CASHFLOW = rent − expenses − tax ──
+// This is the actual money you pocket from the rental activity itself.
+// The mortgage payment (interest + principal) is a separate financing cost.
+const netRentalCF=isR?(p.rent||0)-(p.expenses||0)-rTax:0;
+
+// ── INTEREST DEDUCTION — separate personal income tax benefit ──
+// In Norway, interest expenses give a 22% tax reduction on personal income.
+// This is NOT part of the rental cashflow, but a separate benefit the owner receives.
+const interestDeduction=intMonth*TR; // 22% of interest — monthly personal tax saving
+
+// ── TOTAL MONTHLY PICTURE (for display) ──
+// What you actually have left each month after everything:
+// Net rental cashflow − mortgage payment + interest deduction from personal tax
+const cfPre=isR?netRentalCF-mMort:-(p.hcost||0)-mMort; // before interest deduction
+const cfPost=isR?cfPre+interestDeduction:cfPre; // after personal interest deduction
 
 const val=p.value||p.purchase||0,eq=val-(p.loan||0);
 const grossY=isR&&val?((p.rent||0)*12/val)*100:0;
 const eqIn=p.equityIn||(val-(p.loan||0));
 
-// ── FIX #3: ROI — includes principal repaid + appreciation ──
-// ROI = ((Net Rental Profit × 0.78) + Principal Repaid + Appreciation) / Initial EK
-// Net Rental Profit = Rent - Expenses - Interest (annual)
-const netRentalProfitAnn=isR?((p.rent||0)-(p.expenses||0)-intMonth)*12:0;
+// ── ROI — includes principal repaid + appreciation ──
+const netRentalProfitAnn=isR?netRentalCF*12:0; // already after 22% tax
 const principalRepaidAnn=principalMonth*12;
 const appreciation=val*DEFAULT_GROWTH; // 4% default
-const roi=isR&&eqIn?((Math.max(0,netRentalProfitAnn)*(1-TR)+principalRepaidAnn+appreciation)/eqIn)*100:0;
+const roi=isR&&eqIn?((netRentalProfitAnn+principalRepaidAnn+appreciation)/eqIn)*100:0;
 
 const ltv=val?((p.loan||0)/val)*100:0;
 const pSqm=p.sqm?Math.round(val/p.sqm):0,rSqm=isR&&p.sqm?Math.round((p.rent||0)/p.sqm):0;
 const netAnnPost=isR?cfPost*12:0;
 const gainTax=(val-(p.purchase||0))*TR;
-return{loan,mMort,intMonth,principalMonth,cfPre,cfPost,rTax,taxableR,taxShield,eq,grossY,roi,ltv,pSqm,rSqm,netAnnPost,val,gainTax,isR,netRentalProfitAnn,principalRepaidAnn,appreciation};
+return{loan,mMort,intMonth,principalMonth,cfPre,cfPost,rTax,taxableR,interestDeduction,netRentalCF,eq,grossY,roi,ltv,pSqm,rSqm,netAnnPost,val,gainTax,isR,netRentalProfitAnn,principalRepaidAnn,appreciation};
 }
 
 // ── TOTALS ──
@@ -900,7 +907,7 @@ const t=tots();
 document.getElementById('h-nw').textContent='kr '+fmtK(t.nw);
 document.getElementById('h-sub').textContent='Aktiva kr '+fmtK(t.pv+t.tsav)+' — Gjeld kr '+fmtK(t.td);
 document.getElementById('h-cf').textContent=(t.rentalCf>=0?'+ ':'')+'kr '+fmt(Math.round(t.rentalCf));
-document.getElementById('h-cf-sub').textContent=t.primary.length?'utleie (primærbolig ekskl.)':'inkl. skattefradrag';
+document.getElementById('h-cf-sub').textContent=t.primary.length?'utleie netto (primærbolig ekskl.)':'netto etter skatt og lån';
 // Estimated annual NW growth: rental CF + principal repaid + appreciation + investment returns
 const annRentalCF=t.rentalCf*12;
 const annPrincipal=t.rentals.reduce((s,p)=>s+propM(p).principalRepaidAnn,0);
@@ -986,17 +993,17 @@ const el=document.getElementById('insights'),ins=[];
 if(!t.rentals.length&&!D.savings.length&&!t.ti){el.innerHTML='<div class="empty">Legg inn data for handlingsplan</div>';return;}
 const ltv=t.pv?(t.pd/t.pv*100):0;
 if(t.rentalCf>5000){
-ins.push({c:'good',h:'💚 Reell cashflow kr '+fmt(Math.round(t.rentalCf))+'/mnd — toppsjiktet',
-b:`Netto etter driftskostnader, terminbeløp og skattefradrag (22% rentefradrag inkludert). Primærboligen er holdt utenfor. Skatten beregnes på leie − driftskostn. − renter.`,
+ins.push({c:'good',h:'💚 Netto cashflow kr '+fmt(Math.round(t.rentalCf))+'/mnd — toppsjiktet',
+b:`Netto etter driftskostnader, 22% utleieskatt, lånekostnader og rentefradrag. Skatt beregnes på (leie − driftskostn.). Rentefradrag (22% av renter) gis separat som personlig skattefordel.`,
 step:`Neste steg: Reinvester kr ${fmt(Math.round(t.rentalCf))} månedlig i et globalt indeksfond`});
 } else if(t.rentalCf<0&&t.rentals.length>0){
-ins.push({c:'bad',h:'🔴 Negativ reell cashflow kr '+fmt(Math.round(Math.abs(t.rentalCf)))+'/mnd',
-b:`Etter driftskostn., terminbeløp og skattefradrag. Skatt: 22% × (leie − driftskostn. − renter). Renteskattefradraget er allerede inkludert i denne cashflowen.`,
+ins.push({c:'bad',h:'🔴 Negativ netto cashflow kr '+fmt(Math.round(Math.abs(t.rentalCf)))+'/mnd',
+b:`Etter 22% utleieskatt (leie − drift), lånekostnader og rentefradrag. Rentefradraget (22% av renter) er allerede inkludert, men dekker ikke underskuddet.`,
 step:`Neste steg: Forhandle leieøkning, eller ta refinansieringssamtale med banken`});
 }
 if(t.intTaxRed>500){
-ins.push({c:'info',h:`💼 Renteskattefradrag: kr ${fmt(Math.round(t.intTaxRed*12))}/år tilbake`,
-b:`Totale rentekostnader: kr ${fmt(Math.round(t.totalIntMonth))}/mnd = kr ${fmtK(Math.round(t.totalIntMonth*12))}/år. Du får 22% av dette tilbake som skattefradrag: kr ${fmtK(Math.round(t.totalIntMonth*12))} × 22% = kr ${fmt(Math.round(t.intTaxRed*12))}/år. Allerede inkludert i reell cashflow.`,
+ins.push({c:'info',h:`💼 Rentefradrag: kr ${fmt(Math.round(t.intTaxRed*12))}/år i personlig skattebesparelse`,
+b:`Totale rentekostnader: kr ${fmt(Math.round(t.totalIntMonth))}/mnd = kr ${fmtK(Math.round(t.totalIntMonth*12))}/år. Du får 22% av dette som fradrag på personlig inntektsskatt: kr ${fmtK(Math.round(t.totalIntMonth*12))} × 22% = kr ${fmt(Math.round(t.intTaxRed*12))}/år. NB: dette er IKKE et fradrag på utleieinntekten, men på din personlige skatt.`,
 step:`Neste steg: Sjekk at alle renteutgifter er korrekt rapportert i skattemeldingen`});
 }
 // ROI insight with new formula
@@ -1060,7 +1067,7 @@ return`<div class="prop-card primary-res"><div class="prop-hdr"><div style="flex
 }
 const cfC=m.cfPost>=0?'good':'bad',yC=m.grossY>=5?'good':m.grossY>=3?'warn':'bad';
 const sb=p.status==='Utleid'?'bdg-green':p.status==='Ledig'?'bdg-red':'bdg-gray';
-return`<div class="prop-card"><div class="prop-hdr"><div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800">${esc(p.name)}</div><div style="font-size:12px;color:#64748b">${esc(p.address||'')}${p.sqm?' — '+p.sqm+' kvm':''}</div>${p.loan?`<div style="font-size:11px;color:#64748b;margin-top:3px">${p.ltype==='serial'?'Serielån':'Annuitetslån'}: kr ${fmtK(p.loan)} — ${p.rate}% — kr ${fmt(Math.round(m.mMort))}/mnd</div>`:''}</div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0"><span class="badge ${sb}">${p.status}</span><button class="btn-del" onclick="delProp(${p.id})" style="color:#ef4444;font-size:12px">× slett</button></div></div><div class="prop-body"><div style="background:${m.cfPost>=0?'linear-gradient(135deg,#f0fdf4,#dcfce7)':'linear-gradient(135deg,#fef2f2,#fee2e2)'};border-radius:12px;padding:13px;margin-bottom:10px;border:1px solid ${m.cfPost>=0?'#16a34a':'#dc2626'}"><div style="font-size:10px;color:${m.cfPost>=0?'#16a34a':'#dc2626'};text-transform:uppercase;font-weight:700;letter-spacing:1px;margin-bottom:3px">⭐ Reell cashflow (inkl. skattefradrag)</div><div style="font-size:20px;font-weight:900;color:${m.cfPost>=0?'#16a34a':'#dc2626'}">kr ${fmt(Math.round(m.cfPost))}/mnd</div><div style="font-size:11px;color:#475569;margin-top:2px">= (leie − drift − terminbeløp) + rentefradrag</div></div><div class="metrics"><div class="metric"><div class="metric-lbl">Brutto yield</div><div class="metric-val ${yC}">${fmtD(m.grossY)}%</div><div class="metric-sub">${m.grossY>=5?'Over markedsnorm':'Under markedsnorm'}</div></div><div class="metric"><div class="metric-lbl">Total ROI etter skatt</div><div class="metric-val ${m.roi>=8?'good':m.roi>=4?'warn':'bad'}">${fmtD(m.roi)}%</div><div class="metric-sub">inkl. avdrag + prisvekst</div></div><div class="metric"><div class="metric-lbl">LTV</div><div class="metric-val ${m.ltv>80?'bad':m.ltv>60?'warn':'good'}">${fmtD(m.ltv)}%</div></div><div class="metric"><div class="metric-lbl">Egenkapital</div><div class="metric-val good">kr ${fmtK(Math.round(m.eq))}</div></div></div><button class="expand-btn" onclick="toggleDet(${p.id},this)">Vis detaljer og rediger</button><div class="prop-det" id="det-${p.id}"><div class="prop-section">Skatteberegning (korrigert)</div><div style="background:#dcfce7;border-radius:8px;padding:9px 12px;font-size:11px;color:#166534;margin-bottom:10px">Skattegrunnlag = leie (kr ${fmt(p.rent)}) − driftskostn. (kr ${fmt(p.expenses)}) − renter (kr ${fmt(Math.round(m.intMonth))}) = kr ${fmt(Math.round(m.taxableR))} × 22% = kr ${fmt(Math.round(m.rTax))}/mnd skatt.<br>Reell cashflow = (leie − drift − terminbeløp) + rentefradrag (kr ${fmt(Math.round(m.taxShield))}/mnd)</div><div class="prop-row"><span class="prop-row-lbl">Cashflow før skattefradrag</span><span class="prop-row-val">kr ${fmt(Math.round(m.cfPre))}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">+ Skattefradrag på renter (22%)</span><span class="prop-row-val good">+ kr ${fmt(Math.round(m.taxShield))}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">= Reell cashflow</span><span class="prop-row-val ${cfC}">kr ${fmt(Math.round(m.cfPost))}/mnd</span></div><div class="prop-section">Formuesbygging (ikke på bankkonto)</div><div class="prop-row"><span class="prop-row-lbl">Avdrag (gjeldsnedbet.)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.principalRepaidAnn))}</span></div><div class="prop-row"><span class="prop-row-lbl">Prisvekst (4%)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.appreciation))}</span></div><div class="prop-row"><span class="prop-row-lbl">Netto leie etter skatt/år</span><span class="prop-row-val ${m.netRentalProfitAnn>=0?'good':'bad'}">kr ${fmtK(Math.round(m.netRentalProfitAnn*(1-TR)))}</span></div><div class="prop-row" style="border-top:2px solid #16a34a;padding-top:10px"><span class="prop-row-lbl"><strong>Total ROI etter skatt</strong></span><span class="prop-row-val good" style="font-size:16px">${fmtD(m.roi)}%</span></div><div class="prop-section">Salgsanalyse — hva sitter du igjen med?</div>
+return`<div class="prop-card"><div class="prop-hdr"><div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800">${esc(p.name)}</div><div style="font-size:12px;color:#64748b">${esc(p.address||'')}${p.sqm?' — '+p.sqm+' kvm':''}</div>${p.loan?`<div style="font-size:11px;color:#64748b;margin-top:3px">${p.ltype==='serial'?'Serielån':'Annuitetslån'}: kr ${fmtK(p.loan)} — ${p.rate}% — kr ${fmt(Math.round(m.mMort))}/mnd</div>`:''}</div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0"><span class="badge ${sb}">${p.status}</span><button class="btn-del" onclick="delProp(${p.id})" style="color:#ef4444;font-size:12px">× slett</button></div></div><div class="prop-body"><div style="background:${m.cfPost>=0?'linear-gradient(135deg,#f0fdf4,#dcfce7)':'linear-gradient(135deg,#fef2f2,#fee2e2)'};border-radius:12px;padding:13px;margin-bottom:10px;border:1px solid ${m.cfPost>=0?'#16a34a':'#dc2626'}"><div style="font-size:10px;color:${m.cfPost>=0?'#16a34a':'#dc2626'};text-transform:uppercase;font-weight:700;letter-spacing:1px;margin-bottom:3px">⭐ Netto cashflow</div><div style="font-size:20px;font-weight:900;color:${m.cfPost>=0?'#16a34a':'#dc2626'}">kr ${fmt(Math.round(m.cfPost))}/mnd</div><div style="font-size:11px;color:#475569;margin-top:2px">= (leie − drift − skatt) − lån + rentefradrag</div></div><div class="metrics"><div class="metric"><div class="metric-lbl">Brutto yield</div><div class="metric-val ${yC}">${fmtD(m.grossY)}%</div><div class="metric-sub">${m.grossY>=5?'Over markedsnorm':'Under markedsnorm'}</div></div><div class="metric"><div class="metric-lbl">Total ROI etter skatt</div><div class="metric-val ${m.roi>=8?'good':m.roi>=4?'warn':'bad'}">${fmtD(m.roi)}%</div><div class="metric-sub">inkl. avdrag + prisvekst</div></div><div class="metric"><div class="metric-lbl">LTV</div><div class="metric-val ${m.ltv>80?'bad':m.ltv>60?'warn':'good'}">${fmtD(m.ltv)}%</div></div><div class="metric"><div class="metric-lbl">Egenkapital</div><div class="metric-val good">kr ${fmtK(Math.round(m.eq))}</div></div></div><button class="expand-btn" onclick="toggleDet(${p.id},this)">Vis detaljer og rediger</button><div class="prop-det" id="det-${p.id}"><div class="prop-section">Skatteberegning (korrigert)</div><div style="background:#dcfce7;border-radius:8px;padding:9px 12px;font-size:11px;color:#166534;margin-bottom:10px">Skatt på utleie = 22% av (leie − driftskostn.) = 22% × kr ${fmt(Math.round(m.taxableR))} = kr ${fmt(Math.round(m.rTax))}/mnd.<br>Netto utleie = kr ${fmt(p.rent)} − kr ${fmt(p.expenses)} − kr ${fmt(Math.round(m.rTax))} = kr ${fmt(Math.round(m.netRentalCF))}/mnd.<br>Rentefradrag = 22% av renter (kr ${fmt(Math.round(m.intMonth))}/mnd) = kr ${fmt(Math.round(m.interestDeduction))}/mnd — trekkes fra personlig skatt (separat).</div><div class="prop-row"><span class="prop-row-lbl">Leieinntekt</span><span class="prop-row-val good">kr ${fmt(p.rent)}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">− Driftskostnader</span><span class="prop-row-val">− kr ${fmt(p.expenses)}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">− Skatt (22% av kr ${fmt(Math.round(m.taxableR))})</span><span class="prop-row-val bad">− kr ${fmt(Math.round(m.rTax))}/mnd</span></div><div class="prop-row" style="border-top:1px solid #16a34a;padding-top:6px"><span class="prop-row-lbl"><strong>= Netto utleie-cashflow</strong></span><span class="prop-row-val ${m.netRentalCF>=0?'good':'bad'}"><strong>kr ${fmt(Math.round(m.netRentalCF))}/mnd</strong></span></div><div class="prop-row"><span class="prop-row-lbl">− Lånekostnad (terminbeløp)</span><span class="prop-row-val bad">− kr ${fmt(Math.round(m.mMort))}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">+ Rentefradrag (22% av renter, personlig skatt)</span><span class="prop-row-val good">+ kr ${fmt(Math.round(m.interestDeduction))}/mnd</span></div><div class="prop-row" style="border-top:2px solid #0f172a;padding-top:8px"><span class="prop-row-lbl"><strong>= Total netto etter alt</strong></span><span class="prop-row-val ${cfC}"><strong>kr ${fmt(Math.round(m.cfPost))}/mnd</strong></span></div><div class="prop-section">Formuesbygging (ikke på bankkonto)</div><div class="prop-row"><span class="prop-row-lbl">Avdrag (gjeldsnedbet.)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.principalRepaidAnn))}</span></div><div class="prop-row"><span class="prop-row-lbl">Prisvekst (4%)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.appreciation))}</span></div><div class="prop-row"><span class="prop-row-lbl">Netto utleie etter skatt/år</span><span class="prop-row-val ${m.netRentalProfitAnn>=0?'good':'bad'}">kr ${fmtK(Math.round(m.netRentalProfitAnn))}</span></div><div class="prop-row" style="border-top:2px solid #16a34a;padding-top:10px"><span class="prop-row-lbl"><strong>Total ROI etter skatt</strong></span><span class="prop-row-val good" style="font-size:16px">${fmtD(m.roi)}%</span></div><div class="prop-section">Salgsanalyse — hva sitter du igjen med?</div>
 ${(()=>{const sat=calcPropertyAfterTax(p);return `
 <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border-radius:10px;padding:12px;margin-bottom:8px;border:1px solid #bbf7d0">
 <div class="prop-row"><span class="prop-row-lbl">Markedsverdi</span><span class="prop-row-val">kr ${fmtK(Math.round(sat.val))}</span></div>
@@ -1082,19 +1089,22 @@ if(!price||!rent){document.getElementById('ar').innerHTML='';return;}
 const loanAmt=price-eq,loan=calcLoan(loanAmt,rate,years,lt),mon=loan.avg;
 const intMonth=loanAmt*rate/100/12;
 const principalMonth=mon-intMonth;
-// FIX: Tax = 22% of (rent - expenses - interest)
-const taxableR=Math.max(0,rent-exp-intMonth);
+// Rental tax = 22% of (rent - expenses). Interest NOT deducted from rental.
+const taxableR=Math.max(0,rent-exp);
 const rTax=taxableR*TR;
-// FIX: Real cash flow = (rent - exp - mortgage) + interest tax shield
-const cfPre=rent-exp-mon;
-const taxShield=intMonth*TR;
-const cfPost=cfPre+taxShield;
+// Net rental cashflow = rent - expenses - tax
+const netRentalCF=rent-exp-rTax;
+// Interest deduction = separate personal tax benefit (22% of interest)
+const interestDeduction=intMonth*TR;
+// Total monthly: net rental - mortgage + interest deduction
+const cfPre=netRentalCF-mon;
+const cfPost=cfPre+interestDeduction;
 const grossY=(rent*12/price)*100;
-// FIX: ROI includes principal + appreciation
-const netRentalProfitAnn=(rent-exp-intMonth)*12;
+// ROI: net rental (already after tax) + principal + appreciation
+const netRentalProfitAnn=netRentalCF*12;
 const principalRepaidAnn=principalMonth*12;
 const appreciationAnn=price*growth/100;
-const roi=eq?((Math.max(0,netRentalProfitAnn)*(1-TR)+principalRepaidAnn+appreciationAnn)/eq*100):0;
+const roi=eq?((netRentalProfitAnn+principalRepaidAnn+appreciationAnn)/eq*100):0;
 const be=cfPost>0?(eq/(cfPost*12)).toFixed(1):'∞';
 let projRows='',bal=loanAmt;
 for(let yr=1;yr<=hor;yr++){
@@ -1106,7 +1116,7 @@ projRows+=`<div class="prop-row"><span class="prop-row-lbl">År ${yr}</span><spa
 }
 const score=(grossY>=4?1:0)+(cfPost>=0?1:0)+(roi>=5?1:0)+(grossY>=5?1:0);
 const[vCls,vTxt,vSub]=score>=3?['buy','KJØP','Tallene støtter investering']:score===2?['maybe','VURDER','Noen nøkkeltall svake']:['dont','IKKE KJØP','Tallene taler mot kjøp'];
-document.getElementById('ar').innerHTML=`<div class="analyzer-result"><div class="verdict ${vCls}"><div class="verdict-text">${vTxt}</div><div class="verdict-sub">${vSub}</div></div><div style="background:${cfPost>=0?'#f0fdf4':'#fef2f2'};border-radius:12px;padding:13px;margin-bottom:10px;border:1px solid ${cfPost>=0?'#16a34a':'#dc2626'}"><div style="font-size:10px;color:${cfPost>=0?'#16a34a':'#dc2626'};text-transform:uppercase;font-weight:700;letter-spacing:1px;margin-bottom:3px">⭐ Reell cashflow (inkl. skattefradrag)</div><div style="font-size:20px;font-weight:900;color:${cfPost>=0?'#16a34a':'#dc2626'}">kr ${fmt(Math.round(cfPost))}/mnd</div><div style="font-size:11px;color:#475569;margin-top:2px">= (leie − drift − terminbeløp) + rentefradrag kr ${fmt(Math.round(taxShield))}/mnd</div></div><div class="metrics"><div class="metric"><div class="metric-lbl">Brutto yield</div><div class="metric-val ${grossY>=5?'good':grossY>=4?'warn':'bad'}">${fmtD(grossY)}%</div></div><div class="metric"><div class="metric-lbl">Total ROI etter skatt</div><div class="metric-val ${roi>=8?'good':roi>=4?'warn':'bad'}">${fmtD(roi)}%</div><div class="metric-sub">inkl. avdrag + prisvekst</div></div><div class="metric"><div class="metric-lbl">Terminbeløp/mnd</div><div class="metric-val neutral">kr ${fmt(Math.round(mon))}</div></div><div class="metric"><div class="metric-lbl">Skattefradrag/mnd</div><div class="metric-val good">kr ${fmt(Math.round(taxShield))}</div></div>${sqm?`<div class="metric"><div class="metric-lbl">Pris/kvm</div><div class="metric-val neutral">kr ${fmt(Math.round(price/sqm))}</div></div>`:''}<div class="metric"><div class="metric-lbl">Break-even EK</div><div class="metric-val neutral">${be} år</div></div></div><div style="background:#eff6ff;border-radius:8px;padding:10px 12px;font-size:11px;color:#1e40af;margin:10px 0">📊 <strong>Formuesbygging/år:</strong> Avdrag kr ${fmtK(Math.round(principalRepaidAnn))} + Prisvekst kr ${fmtK(Math.round(appreciationAnn))} = kr ${fmtK(Math.round(principalRepaidAnn+appreciationAnn))}/år som øker nettoformuen (synes ikke på bankkontoen)</div><div style="font-size:11px;color:#64748b;font-weight:700;margin:12px 0 6px">${hor}-års prognose (${growth}%/år)</div>${projRows}</div>`;
+document.getElementById('ar').innerHTML=`<div class="analyzer-result"><div class="verdict ${vCls}"><div class="verdict-text">${vTxt}</div><div class="verdict-sub">${vSub}</div></div><div style="background:${cfPost>=0?'#f0fdf4':'#fef2f2'};border-radius:12px;padding:13px;margin-bottom:10px;border:1px solid ${cfPost>=0?'#16a34a':'#dc2626'}"><div style="font-size:10px;color:${cfPost>=0?'#16a34a':'#dc2626'};text-transform:uppercase;font-weight:700;letter-spacing:1px;margin-bottom:3px">⭐ Netto cashflow</div><div style="font-size:20px;font-weight:900;color:${cfPost>=0?'#16a34a':'#dc2626'}">kr ${fmt(Math.round(cfPost))}/mnd</div><div style="font-size:11px;color:#475569;margin-top:2px">= (leie − drift − skatt) − lån + rentefradrag</div></div><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:#475569;line-height:1.7"><strong>Netto utleie:</strong> kr ${fmt(rent)} − kr ${fmt(exp)} − kr ${fmt(Math.round(rTax))} (skatt) = <strong>kr ${fmt(Math.round(netRentalCF))}/mnd</strong><br><strong>Lånekostnad:</strong> − kr ${fmt(Math.round(mon))}/mnd (terminbeløp)<br><strong>Rentefradrag:</strong> + kr ${fmt(Math.round(interestDeduction))}/mnd (22% av renter, personlig skatt)</div><div class="metrics"><div class="metric"><div class="metric-lbl">Brutto yield</div><div class="metric-val ${grossY>=5?'good':grossY>=4?'warn':'bad'}">${fmtD(grossY)}%</div></div><div class="metric"><div class="metric-lbl">Total ROI etter skatt</div><div class="metric-val ${roi>=8?'good':roi>=4?'warn':'bad'}">${fmtD(roi)}%</div><div class="metric-sub">inkl. avdrag + prisvekst</div></div><div class="metric"><div class="metric-lbl">Netto utleie/mnd</div><div class="metric-val ${netRentalCF>=0?'good':'bad'}">kr ${fmt(Math.round(netRentalCF))}</div></div><div class="metric"><div class="metric-lbl">Rentefradrag/mnd</div><div class="metric-val good">kr ${fmt(Math.round(interestDeduction))}</div></div>${sqm?`<div class="metric"><div class="metric-lbl">Pris/kvm</div><div class="metric-val neutral">kr ${fmt(Math.round(price/sqm))}</div></div>`:''}<div class="metric"><div class="metric-lbl">Break-even EK</div><div class="metric-val neutral">${be} år</div></div></div><div style="background:#eff6ff;border-radius:8px;padding:10px 12px;font-size:11px;color:#1e40af;margin:10px 0">📊 <strong>Formuesbygging/år:</strong> Avdrag kr ${fmtK(Math.round(principalRepaidAnn))} + Prisvekst kr ${fmtK(Math.round(appreciationAnn))} = kr ${fmtK(Math.round(principalRepaidAnn+appreciationAnn))}/år som øker nettoformuen (synes ikke på bankkontoen)</div><div style="font-size:11px;color:#64748b;font-weight:700;margin:12px 0 6px">${hor}-års prognose (${growth}%/år)</div>${projRows}</div>`;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1374,7 +1384,7 @@ INNTEKT: kr ${fmt(t.ti)}/mnd, Sparegrad: ${fmtD(t.sr)}%
 TILGJENGELIG EK: kr ${fmtK(Math.round(t.totalAvailable))}
 MÅL: ${D.goals.map(g=>`${g.name} (kr ${fmtK(g.target)})`).join(', ')||'Ingen'}
 
-VIKTIG: Reell cashflow = (leie - drift - terminbeløp) + rentefradrag (22% av renter). Renter ER fradragsberettiget i norsk utleiebeskatning. ROI inkluderer netto leie etter skatt + avdrag (gjeldsnedbet.) + prisvekst (4%/år). Bankkonto øker KUN med netto cashflow. Formue øker også via avdrag og prisvekst.`;
+VIKTIG NORSK SKATTEREGEL: Utleieskatt = 22% av (leie − driftskostnader). Renter gir IKKE fradrag på utleieinntekt. I stedet gir renter et separat fradrag (22%) på personlig inntektsskatt. Netto cashflow = (leie − drift − skatt) − lånekostnad + rentefradrag. ROI inkluderer netto utleie etter skatt + avdrag + prisvekst (4%/år).`;
 }
 async function sendChat(){
 if(!requirePro('AI-rådgiver')) return;
@@ -1450,9 +1460,15 @@ function navTo(name){document.querySelectorAll('.page').forEach(p=>p.classList.r
 function showTab(id,btn){['t-buy','t-sim','t-sc','t-mc','t-mkt'].forEach(t=>{const el=document.getElementById(t);if(el)el.style.display=t===id?'block':'none';});document.querySelectorAll('.inner-tab').forEach(b=>b.classList.remove('on'));btn.classList.add('on');}
 function toggleForm(id){document.getElementById(id).classList.toggle('open');}
 
-// ── LOGIN / PROFILE — stubs overridden by module script ──
+// ── LOGIN / PROFILE ──
 function toggleSignup(){const l=document.getElementById('login-form-area'),s=document.getElementById('signup-form-area');if(l.style.display==='none'){l.style.display='block';s.style.display='none';}else{l.style.display='none';s.style.display='block';}}
-// doLogin, doSignup, doLogout defined in module script (Supabase)
+// Stub auth functions — replaced by module script once Supabase loads.
+// If user clicks before module is ready, queue the call.
+window._authReady = false;
+window._authQueue = [];
+function doLogin(){ if(window._authReady && window._doLoginReal) window._doLoginReal(); else { window._authQueue.push('login'); alert('Laster inn... Prøv igjen om et øyeblikk.'); } }
+function doSignup(){ if(window._authReady && window._doSignupReal) window._doSignupReal(); else { window._authQueue.push('signup'); alert('Laster inn... Prøv igjen om et øyeblikk.'); } }
+function doLogout(){ if(window._authReady && window._doLogoutReal) window._doLogoutReal(); else alert('Laster inn...'); }
 function showProfile(p){
 document.getElementById('login-form-area').style.display='none';
 document.getElementById('signup-form-area').style.display='none';
@@ -1539,7 +1555,7 @@ updateAll();
 </script>
 
 <script type="module">
-  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js';
+  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
   const supabaseUrl = "https://enyjvqsiisjgshhhahjy.supabase.co";
   const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVueWp2cXNpaXNqZ3NoaGhhaGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyMDkzMzEsImV4cCI6MjA5MDc4NTMzMX0.an0cHuOTrTnotUBM8e-vWiIB7gNYkLP7QJd5D0K0YE0";
@@ -1613,7 +1629,7 @@ updateAll();
     }
   }
 
-  window.doLogin = async () => {
+  window._doLoginReal = async () => {
     const email = document.getElementById("login-email").value.trim();
     const pass = document.getElementById("login-pass").value;
     if(!email || !pass) { alert("Fyll inn e-post og passord."); return; }
@@ -1621,18 +1637,23 @@ updateAll();
     const btn = document.querySelector('#login-form-area .btn-green');
     if(btn) { btn.textContent = 'Logger inn...'; btn.disabled = true; }
 
-    const { data, error } = await client.auth.signInWithPassword({ email, password: pass });
-
-    if(btn) { btn.textContent = 'Logg inn'; btn.disabled = false; }
-
-    if(error) {
-      alert("Feil: " + error.message);
-    } else {
-      await handleAuthSuccess(data.user);
+    try {
+      const { data, error } = await client.auth.signInWithPassword({ email, password: pass });
+      if(btn) { btn.textContent = 'Logg inn'; btn.disabled = false; }
+      if(error) {
+        alert("Feil: " + error.message);
+      } else {
+        await handleAuthSuccess(data.user);
+      }
+    } catch(e) {
+      if(btn) { btn.textContent = 'Logg inn'; btn.disabled = false; }
+      alert("Nettverksfeil. Sjekk internettforbindelsen.");
     }
   };
+  // Override the stub immediately
+  window.doLogin = window._doLoginReal;
 
-  window.doSignup = async () => {
+  window._doSignupReal = async () => {
     const name = document.getElementById("signup-name").value.trim();
     const email = document.getElementById("signup-email").value.trim();
     const pass = document.getElementById("signup-pass").value;
@@ -1644,23 +1665,27 @@ updateAll();
     const btn = document.querySelector('#signup-form-area .btn-green');
     if(btn) { btn.textContent = 'Oppretter...'; btn.disabled = true; }
 
-    const { data, error } = await client.auth.signUp({ email, password: pass, options: { data: { full_name: name } } });
-
-    if(btn) { btn.textContent = 'Opprett konto'; btn.disabled = false; }
-
-    if(error) {
-      alert("Feil: " + error.message);
-    } else if(data.user && !data.user.confirmed_at && data.user.identities?.length === 0) {
-      alert("En bruker med denne e-posten finnes allerede.");
-    } else if(data.session) {
-      await handleAuthSuccess(data.user, name);
-    } else {
-      alert("Sjekk e-posten din for bekreftelseslenke!");
+    try {
+      const { data, error } = await client.auth.signUp({ email, password: pass, options: { data: { full_name: name } } });
+      if(btn) { btn.textContent = 'Opprett konto'; btn.disabled = false; }
+      if(error) {
+        alert("Feil: " + error.message);
+      } else if(data.user && !data.user.confirmed_at && data.user.identities?.length === 0) {
+        alert("En bruker med denne e-posten finnes allerede.");
+      } else if(data.session) {
+        await handleAuthSuccess(data.user, name);
+      } else {
+        alert("Konto opprettet! Sjekk e-posten din for bekreftelseslenke.");
+      }
+    } catch(e) {
+      if(btn) { btn.textContent = 'Opprett konto'; btn.disabled = false; }
+      alert("Nettverksfeil. Sjekk internettforbindelsen.");
     }
   };
+  window.doSignup = window._doSignupReal;
 
-  window.doLogout = async () => {
-    await client.auth.signOut();
+  window._doLogoutReal = async () => {
+    try { await client.auth.signOut(); } catch(e) {}
     localStorage.removeItem('wOS_profile');
     window._userId = null;
     window._userPro = false;
@@ -1673,6 +1698,10 @@ updateAll();
     document.getElementById('login-pass').value='';
     window.updateProUI();
   };
+  window.doLogout = window._doLogoutReal;
+
+  // Mark auth as ready
+  window._authReady = true;
 
   // ── PRO SUBSCRIPTION ──
   window._selectedPlan = 'yearly';
@@ -1685,26 +1714,57 @@ updateAll();
   };
   window.startProSubscription = async () => {
     if(!window._userId) { alert('Du må logge inn først.'); window.closePaywall(); window.navTo('more'); return; }
-    // In production, integrate Stripe/Vipps here.
-    // For now, activate pro directly for demo.
+    const btn = document.querySelector('#paywall-modal button[onclick*="startPro"]');
+    if(btn) { btn.disabled = true; btn.textContent = 'Laster...'; }
     try {
-      await client.from('subscriptions').upsert({
-        user_id: window._userId,
-        plan: window._selectedPlan,
-        is_active: true,
-        started_at: new Date().toISOString()
-      }, { onConflict: 'user_id' });
-    } catch(e) {}
-    window._userPro = true;
-    window.updateProUI();
-    window.closePaywall();
-    // Update stored profile
-    try {
-      const p = JSON.parse(localStorage.getItem('wOS_profile'));
-      if(p) { p.is_pro = true; localStorage.setItem('wOS_profile', JSON.stringify(p)); window.showProfile(p); }
-    } catch(e) {}
-    alert('🎉 Velkommen til WealthOS Pro!');
+      const { data: { session } } = await client.auth.getSession();
+      if(!session) { alert('Sesjonen din har utløpt. Logg inn igjen.'); return; }
+      const res = await fetch('https://enyjvqsiisjgshhhahjy.supabase.co/functions/v1/create-checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + session.access_token,
+        },
+        body: JSON.stringify({
+          successUrl: window.location.origin + window.location.pathname + '?payment=success',
+          cancelUrl: window.location.origin + window.location.pathname + '?payment=cancelled',
+        }),
+      });
+      const data = await res.json();
+      if(data.url) {
+        window.location.href = data.url; // Redirect to Stripe Checkout
+      } else {
+        alert('Kunne ikke starte betaling: ' + (data.error || 'Ukjent feil'));
+      }
+    } catch(e) {
+      console.error('Checkout error:', e);
+      alert('Noe gikk galt. Prøv igjen.');
+    } finally {
+      if(btn) { btn.disabled = false; btn.textContent = 'Start abonnement'; }
+    }
   };
+
+  // Handle payment success return from Stripe
+  if(window.location.search.includes('payment=success')) {
+    // Remove query param from URL
+    window.history.replaceState({}, '', window.location.pathname);
+    // Wait a moment for webhook to process, then check subscription
+    setTimeout(async () => {
+      try {
+        const { data: { session } } = await client.auth.getSession();
+        if(session?.user) {
+          const { data: sub } = await client.from('subscriptions').select('is_active').eq('user_id', session.user.id).single();
+          if(sub?.is_active) {
+            window._userPro = true;
+            window.updateProUI();
+            const p = JSON.parse(localStorage.getItem('wOS_profile') || '{}');
+            p.is_pro = true; localStorage.setItem('wOS_profile', JSON.stringify(p)); window.showProfile(p);
+            alert('🎉 Velkommen til WealthOS Pro!');
+          }
+        }
+      } catch(e) { console.error(e); }
+    }, 2000);
+  }
 
   // ── SESSION RESTORE ──
   const { data: { session } } = await client.auth.getSession();
