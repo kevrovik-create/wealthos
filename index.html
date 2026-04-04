@@ -594,6 +594,20 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
       </div>
     </div>
   </div>
+  <div class="section-hdr">💰 Finansielle eiendeler</div>
+  <div class="card">
+    <div class="card-hdr"><div><div class="card-ttl">Aksjer, bank, krypto m.m.</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">Nåværende beholdning — oppdateres i formuesoversikten</div></div><button class="badge bdg-blue" onclick="toggleForm('sav-form')" style="cursor:pointer">+ Legg til</button></div>
+    <div class="form-box" id="sav-form">
+      <div class="fi-2col">
+        <div class="fi-group"><label class="fi-label">Navn</label><input class="fi" id="sf-name" placeholder="DNB ASK / Nordnet / Sparekonto"/></div>
+        <div class="fi-group"><label class="fi-label">Type</label><select class="fi" id="sf-type"><option value="bank">🏦 Bankkonto</option><option value="stocks">📈 Aksjer/fond</option><option value="crypto">₿ Krypto</option><option value="bonds">📄 Obligasjoner</option><option value="other">💼 Annet</option></select></div>
+        <div class="fi-group"><label class="fi-label">Nåverdi / saldo (kr)</label><input class="fi fnum" id="sf-amt" type="text" inputmode="decimal" placeholder="500 000"/></div>
+        <div class="fi-group"><label class="fi-label">Forv. avkastning/år (%)</label><input class="fi fdec" id="sf-ret" type="text" inputmode="decimal" placeholder="7"/></div>
+      </div>
+      <div class="btn-row"><button class="btn-green btn-full" onclick="saveSav()">Lagre</button><button class="btn-ghost" onclick="toggleForm('sav-form')">Avbryt</button></div>
+    </div>
+    <div id="sav-list"><div class="empty">Ingen kontoer ennå</div></div>
+  </div>
   <div class="section-hdr">💳 Personlige lån</div>
   <div class="card">
     <div class="card-hdr"><div><div class="card-ttl">Billån, kredittkort m.m.</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">Boliglån legges under Eiendom</div></div><button class="badge bdg-red" onclick="toggleForm('loan-form')" style="cursor:pointer">+ Legg til</button></div>
