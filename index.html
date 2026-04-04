@@ -1490,15 +1490,18 @@ function loadProfile(){try{const p=JSON.parse(localStorage.getItem('wOS_profile'
 window._userPro = false;
 window._userId = null;
 function requirePro(featureName){
-if(window._userPro) return true;
-document.getElementById('paywall-modal').style.display='flex';
-document.getElementById('paywall-feature').textContent=featureName||'Denne funksjonen';
-return false;
+// PRO GATING DISABLED FOR TESTING — re-enable before launch:
+// if(window._userPro) return true;
+// document.getElementById('paywall-modal').style.display='flex';
+// document.getElementById('paywall-feature').textContent=featureName||'Denne funksjonen';
+// return false;
+return true;
 }
 function closePaywall(){document.getElementById('paywall-modal').style.display='none';}
 function updateProUI(){
+// PRO GATING DISABLED FOR TESTING — change back to: window._userPro?'none':'flex'
 document.querySelectorAll('.pro-lock').forEach(el=>{
-el.style.display=window._userPro?'none':'flex';
+el.style.display='none';
 });
 document.querySelectorAll('.pro-content').forEach(el=>{
 el.style.filter=window._userPro?'none':'blur(4px)';
