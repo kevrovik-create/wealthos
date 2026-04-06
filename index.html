@@ -1806,15 +1806,12 @@ updateAll();
     apiKey: "AIzaSyBtTP9zhc1dixpVTIYqwiVRSJ_hkM6TlMU",
     authDomain: "wealthos-1a0d4.firebaseapp.com",
     projectId: "wealthos-1a0d4",
-    storageBucket: "wealthos-1a0d4.firebasestorage.app",
-    messagingSenderId: "836008231345",
-    appId: "1:836008231345:web:3e34d3e39f903997e3bd90"
   };
 
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
 
-  window.testSignup = async function() {
+  window.testSignup = async function () {
     try {
       await createUserWithEmailAndPassword(auth, "test@test.com", "123456");
       alert("User created!");
@@ -1824,7 +1821,5 @@ updateAll();
     }
   };
 </script>
-
-  <button onclick="testSignup()">TEST FIREBASE</button>
 </body>
 </html>
