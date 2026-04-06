@@ -1734,38 +1734,61 @@ updateAll();
     document.getElementById('plan-yearly').style.borderColor = plan==='yearly' ? '#16a34a' : '#e2e8f0';
     document.getElementById('plan-yearly').style.background = plan==='yearly' ? '#f0fdf4' : '#f8fafc';
   };
-  window.startProSubscription = async () => {
-    if(!window._userId) { alert('Du må logge inn først.'); window.closePaywall && window.closePaywall(); window.navTo('more'); return; }
-    const btn = document.querySelector('#paywall-modal button[onclick*="startPro"]');
-    if(btn) { btn.disabled = true; btn.textContent = 'Laster...'; }
-    try {
-      const user = auth.currentUser;
-      if(!user) { alert('Sesjonen din har utløpt. Logg inn igjen.'); return; }
-      const idToken = await user.getIdToken();
-      const res = await fetch('https://your-backend-url/create-checkout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + idToken,
-        },
-        body: JSON.stringify({
-          successUrl: window.location.origin + window.location.pathname + '?payment=success',
-          cancelUrl: window.location.origin + window.location.pathname + '?payment=cancelled',
-        }),
-      });
-      const data = await res.json();
-      if(data.url) {
-        window.location.href = data.url;
-      } else {
-        alert('Kunne ikke starte betaling: ' + (data.error || 'Ukjent feil'));
-      }
-    } catch(e) {
-      console.error('Checkout error:', e);
-      alert('Noe gikk galt. Prøv igjen.');
-    } finally {
-      if(btn) { btn.disabled = false; btn.textContent = 'Start abonnement'; }
+window.startProSubscription = async () => {
+  if(!window._userId) {
+    alert('Du må logge inn først.');
+    window.closePaywall && window.closePaywall();
+    window.navTo('more');
+    return;
+  }
+
+  const btn = document.querySelector('#paywall-modal button[onclick*="startPro"]');
+  if(btn) {
+    btn.disabled = true;
+    btn.textContent = 'Laster...';
+  }
+
+  try {
+    const user = (window._firebaseAuth && window._firebaseAuth.currentUser) || auth.currentUser;
+    if(!user) {
+      alert('Sesjonen din har utløpt. Logg inn igjen.');
+      return;
     }
-  };
+
+    const idToken = await user.getIdToken();
+
+    const res = await fetch('https://us-central1-wealthos-1a0d4.cloudfunctions.net/createCheckoutSession', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + idToken,
+      },
+      body: JSON.stringify({
+        successUrl: window.location.origin + window.location.pathname + '?payment=success',
+        cancelUrl: window.location.origin + window.location.pathname + '?payment=cancelled',
+      } ),
+    });
+
+    const data = await res.json();
+
+    if (!data.sessionId) {
+      alert('Kunne ikke starte betaling: ' + (data.error || 'Ukjent feil'));
+      return;
+    }
+
+    const stripe = Stripe('pk_test_51TI7QSEVZyMDOLUHMPah5Fiz0H5vd8RwL9YyWRsHyRUQUNvJZmkk10SZXrAL4d09NJHAopOshrAXbqtF5UCoAsfx00gSchVRI6');
+    await stripe.redirectToCheckout({ sessionId: data.sessionId });
+  } catch(e) {
+    console.error('Checkout error:', e);
+    alert('Noe gikk galt. Prøv igjen.');
+  } finally {
+    if(btn) {
+      btn.disabled = false;
+      btn.textContent = 'Start abonnement';
+    }
+  }
+};
+
 
   // Check if user is already logged in
   onAuthStateChanged(auth, (user) => {
