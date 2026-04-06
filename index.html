@@ -1770,10 +1770,12 @@ window.startProSubscription = async () => {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + idToken,
       },
-      body: JSON.stringify({
-        successUrl: window.location.origin + window.location.pathname + '?payment=success',
-        cancelUrl: window.location.origin + window.location.pathname + '?payment=cancelled',
-      } ),
+     body: JSON.stringify({
+  plan: window._selectedPlan || 'monthly',
+  successUrl: window.location.origin + window.location.pathname + '?payment=success',
+  cancelUrl: window.location.origin + window.location.pathname + '?payment=cancelled',
+}),
+
     });
 
     const data = await res.json();
