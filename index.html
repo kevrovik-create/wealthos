@@ -1404,14 +1404,24 @@ async function sendChat(){
 if(!requirePro('AI-rådgiver')) return;
 const input=document.getElementById('chat-input');const msg=input.value.trim();if(!msg)return;input.value='';document.getElementById('chat-sugs').style.display='none';addMsg('user',msg);chatHistory.push({role:'user',content:msg});const loadId=addMsg('ai','Analyserer porteføljen din…',true);
 try{
-// Try Supabase Edge Function proxy first (recommended for production)
+// Try Firebase Cloud Function (recommended for production)
 let text = null;
-if(window._supaClient && window._userId) {
+if(window._firebaseAuth && window._userId) {
   try {
-    const { data, error } = await window._supaClient.functions.invoke('ai-chat', {
-      body: { system: buildContext(), messages: chatHistory }
-    });
-    if(!error && data && data.text) text = data.text;
+    const user = window._firebaseAuth.currentUser;
+    if(user) {
+      const idToken = await user.getIdToken();
+      const res = await fetch('https://your-backend-url/ai-chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + idToken,
+        },
+        body: JSON.stringify({ system: buildContext(), messages: chatHistory })
+      });
+      const data = await res.json();
+      if(data && data.text) text = data.text;
+    }
   } catch(e) { /* fallback below */ }
 }
 // Fallback: generate local insights based on data
@@ -1572,12 +1582,21 @@ updateAll();
 </script>
 
 <script type="module">
-  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { getFirestore, collection, query, where, getDocs, setDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-  const supabaseUrl = "https://enyjvqsiisjgshhhahjy.supabase.co";
-  const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVueWp2cXNpaXNqZ3NoaGhhaGp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyMDkzMzEsImV4cCI6MjA5MDc4NTMzMX0.an0cHuOTrTnotUBM8e-vWiIB7gNYkLP7QJd5D0K0YE0";
-  const client = createClient(supabaseUrl, supabaseKey);
-  window._supaClient = client;
+  const firebaseConfig = {
+    apiKey: "AIzaSyBtTP9zhc1dixpVTIYqwiVRSJ_hkM6TlMU",
+    authDomain: "wealthos-1a0d4.firebaseapp.com",
+    projectId: "wealthos-1a0d4",
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  window._firebaseAuth = auth;
+  window._firebaseDb = db;
 
   // ── CLOUD DATA SYNC ──
   let _syncTimer = null;
@@ -1586,25 +1605,23 @@ updateAll();
     clearTimeout(_syncTimer);
     _syncTimer = setTimeout(async () => {
       try {
-        const payload = {
-          user_id: window._userId,
+        const userRef = doc(db, 'user_data', window._userId);
+        await setDoc(userRef, {
           app_data: JSON.stringify(window.D),
           updated_at: new Date().toISOString()
-        };
-        const { error } = await client.from('user_data').upsert(payload, { onConflict: 'user_id' });
-        if(error) console.warn('Cloud save error:', error.message);
-        else {
-          const el = document.getElementById('profile-lastsave');
-          if(el) el.textContent = new Date().toLocaleTimeString('nb-NO',{hour:'2-digit',minute:'2-digit'}) + ' i dag';
-        }
+        }, { merge: true });
+        const el = document.getElementById('profile-lastsave');
+        if(el) el.textContent = new Date().toLocaleTimeString('nb-NO',{hour:'2-digit',minute:'2-digit'}) + ' i dag';
       } catch(e) { console.warn('Cloud save failed:', e); }
     }, 2000); // debounce 2s
   };
 
   async function cloudLoad(userId) {
     try {
-      const { data, error } = await client.from('user_data').select('app_data').eq('user_id', userId).single();
-      if(error) { console.warn('Cloud load error:', error.message); return null; }
+      const userRef = doc(db, 'user_data', userId);
+      const docSnap = await getDocs(query(collection(db, 'user_data'), where('__name__', '==', userId)));
+      if(docSnap.empty) return null;
+      const data = docSnap.docs[0].data();
       if(data && data.app_data) return JSON.parse(data.app_data);
     } catch(e) { console.warn('Cloud load failed:', e); }
     return null;
@@ -1612,30 +1629,30 @@ updateAll();
 
   // ── AUTH FUNCTIONS ──
   async function handleAuthSuccess(user, name) {
+    window._userId = user.uid;
     const profile = {
       name: name || user.email.split('@')[0],
       email: user.email,
-      user_id: user.id,
+      user_id: user.uid,
       loggedIn: true,
-      is_pro: false, // check from DB
-      since: new Date(user.created_at || Date.now()).toLocaleDateString('nb-NO',{month:'short',year:'numeric'})
+      is_pro: false,
+      since: new Date(user.metadata.creationTime || Date.now()).toLocaleDateString('nb-NO',{month:'short',year:'numeric'})
     };
-    // Check pro status
+    // Check pro status from Firestore
     try {
-      const { data } = await client.from('subscriptions').select('is_active').eq('user_id', user.id).single();
-      if(data && data.is_active) profile.is_pro = true;
+      const q = query(collection(db, 'subscriptions'), where('user_id', '==', user.uid), where('is_active', '==', true));
+      const querySnapshot = await getDocs(q);
+      if(!querySnapshot.empty) profile.is_pro = true;
     } catch(e) {}
     localStorage.setItem('wOS_profile', JSON.stringify(profile));
     window.showProfile(profile);
     // Load cloud data and merge
-    const cloudData = await cloudLoad(user.id);
+    const cloudData = await cloudLoad(user.uid);
     if(cloudData) {
-      // If cloud has data and local is empty, use cloud. Otherwise merge.
       const localHasData = window.D.properties.length > 0 || window.D.savings.length > 0 || window.D.incomes.length > 0;
       if(!localHasData || confirm('Skylagrede data funnet. Vil du laste inn fra skyen? (Overskriver lokale data)')) {
         window.D = {...window.D, ...cloudData};
         window.save();
-        // Re-render everything
         window.renderProps(); window.renderLoans(); window.renderGoals();
         window.renderSavings && window.renderSavings();
         window.renderLinks && window.renderLinks('all');
@@ -1655,19 +1672,14 @@ updateAll();
     if(btn) { btn.textContent = 'Logger inn...'; btn.disabled = true; }
 
     try {
-      const { data, error } = await client.auth.signInWithPassword({ email, password: pass });
+      const userCredential = await signInWithEmailAndPassword(auth, email, pass);
       if(btn) { btn.textContent = 'Logg inn'; btn.disabled = false; }
-      if(error) {
-        alert("Feil: " + error.message);
-      } else {
-        await handleAuthSuccess(data.user);
-      }
-    } catch(e) {
+      await handleAuthSuccess(userCredential.user);
+    } catch(error) {
       if(btn) { btn.textContent = 'Logg inn'; btn.disabled = false; }
-      alert("Nettverksfeil. Sjekk internettforbindelsen.");
+      alert("Feil: " + error.message);
     }
   };
-  // Override the stub immediately
   window.doLogin = window._doLoginReal;
 
   window._doSignupReal = async () => {
@@ -1683,26 +1695,18 @@ updateAll();
     if(btn) { btn.textContent = 'Oppretter...'; btn.disabled = true; }
 
     try {
-      const { data, error } = await client.auth.signUp({ email, password: pass, options: { data: { full_name: name } } });
+      const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
       if(btn) { btn.textContent = 'Opprett konto'; btn.disabled = false; }
-      if(error) {
-        alert("Feil: " + error.message);
-      } else if(data.user && !data.user.confirmed_at && data.user.identities?.length === 0) {
-        alert("En bruker med denne e-posten finnes allerede.");
-      } else if(data.session) {
-        await handleAuthSuccess(data.user, name);
-      } else {
-        alert("Konto opprettet! Sjekk e-posten din for bekreftelseslenke.");
-      }
-    } catch(e) {
+      await handleAuthSuccess(userCredential.user, name);
+    } catch(error) {
       if(btn) { btn.textContent = 'Opprett konto'; btn.disabled = false; }
-      alert("Nettverksfeil. Sjekk internettforbindelsen.");
+      alert("Feil: " + error.message);
     }
   };
   window.doSignup = window._doSignupReal;
 
   window._doLogoutReal = async () => {
-    try { await client.auth.signOut(); } catch(e) {}
+    try { await signOut(auth); } catch(e) {}
     localStorage.removeItem('wOS_profile');
     window._userId = null;
     window._userPro = false;
@@ -1713,7 +1717,7 @@ updateAll();
     document.getElementById('profile-email-display').textContent='Logg inn for å synkronisere';
     document.getElementById('login-email').value='';
     document.getElementById('login-pass').value='';
-    window.updateProUI();
+    window.updateProUI && window.updateProUI();
   };
   window.doLogout = window._doLogoutReal;
 
@@ -1730,17 +1734,18 @@ updateAll();
     document.getElementById('plan-yearly').style.background = plan==='yearly' ? '#f0fdf4' : '#f8fafc';
   };
   window.startProSubscription = async () => {
-    if(!window._userId) { alert('Du må logge inn først.'); window.closePaywall(); window.navTo('more'); return; }
+    if(!window._userId) { alert('Du må logge inn først.'); window.closePaywall && window.closePaywall(); window.navTo('more'); return; }
     const btn = document.querySelector('#paywall-modal button[onclick*="startPro"]');
     if(btn) { btn.disabled = true; btn.textContent = 'Laster...'; }
     try {
-      const { data: { session } } = await client.auth.getSession();
-      if(!session) { alert('Sesjonen din har utløpt. Logg inn igjen.'); return; }
-      const res = await fetch('https://enyjvqsiisjgshhhahjy.supabase.co/functions/v1/create-checkout', {
+      const user = auth.currentUser;
+      if(!user) { alert('Sesjonen din har utløpt. Logg inn igjen.'); return; }
+      const idToken = await user.getIdToken();
+      const res = await fetch('https://your-backend-url/create-checkout', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + session.access_token,
+          'Authorization': 'Bearer ' + idToken,
         },
         body: JSON.stringify({
           successUrl: window.location.origin + window.location.pathname + '?payment=success',
@@ -1749,7 +1754,7 @@ updateAll();
       });
       const data = await res.json();
       if(data.url) {
-        window.location.href = data.url; // Redirect to Stripe Checkout
+        window.location.href = data.url;
       } else {
         alert('Kunne ikke starte betaling: ' + (data.error || 'Ukjent feil'));
       }
@@ -1761,43 +1766,13 @@ updateAll();
     }
   };
 
-  // Handle payment success return from Stripe
-  if(window.location.search.includes('payment=success')) {
-    // Remove query param from URL
-    window.history.replaceState({}, '', window.location.pathname);
-    // Wait a moment for webhook to process, then check subscription
-    setTimeout(async () => {
-      try {
-        const { data: { session } } = await client.auth.getSession();
-        if(session?.user) {
-          const { data: sub } = await client.from('subscriptions').select('is_active').eq('user_id', session.user.id).single();
-          if(sub?.is_active) {
-            window._userPro = true;
-            window.updateProUI();
-            const p = JSON.parse(localStorage.getItem('wOS_profile') || '{}');
-            p.is_pro = true; localStorage.setItem('wOS_profile', JSON.stringify(p)); window.showProfile(p);
-            alert('🎉 Velkommen til WealthOS Pro!');
-          }
-        }
-      } catch(e) { console.error(e); }
-    }, 2000);
-  }
-
-  // ── SESSION RESTORE ──
-  const { data: { session } } = await client.auth.getSession();
-  if(session && session.user) {
-    await handleAuthSuccess(session.user);
-  }
-
-  // Listen for auth state changes
-  client.auth.onAuthStateChange(async (event, session) => {
-    if(event === 'SIGNED_IN' && session?.user) {
-      await handleAuthSuccess(session.user);
-    } else if(event === 'SIGNED_OUT') {
-      window._userId = null;
-      window._userPro = false;
+  // Check if user is already logged in
+  onAuthStateChanged(auth, (user) => {
+    if(user) {
+      handleAuthSuccess(user);
     }
   });
+
   </script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
