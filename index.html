@@ -1502,28 +1502,35 @@ document.getElementById('profile-name-display').textContent=p.name;
 document.getElementById('profile-email-display').textContent=p.email;
 document.getElementById('profile-since').textContent=p.since||'—';
 document.getElementById('profile-lastsave').textContent=new Date().toLocaleTimeString('nb-NO',{hour:'2-digit',minute:'2-digit'})+' i dag';
-// Update pro badge
-const proStatus = p.is_pro;
+const proStatus = !!p.is_pro;
 document.getElementById('profile-pro-status').textContent = proStatus ? 'PRO' : 'GRATIS';
 document.getElementById('profile-pro-status').style.color = proStatus ? '#16a34a' : '#64748b';
-window._userPro = !!proStatus;
+window._userPro = proStatus;
 window._userId = p.user_id || null;
 updateProUI();
 }
 function loadProfile(){try{const p=JSON.parse(localStorage.getItem('wOS_profile'));if(p&&p.loggedIn)showProfile(p);}catch(e){}}
+
 // ── PRO FEATURE GATING ──
 window._userPro = false;
 window._userId = null;
 function requirePro(featureName){
-// PRO GATING DISABLED FOR TESTING — re-enable before launch:
-// if(window._userPro) return true;
-// document.getElementById('paywall-modal').style.display='flex';
-// document.getElementById('paywall-feature').textContent=featureName||'Denne funksjonen';
-// return false;
-return true;
+  if(window._userPro) return true;
+  document.getElementById('paywall-modal').style.display='flex';
+  document.getElementById('paywall-feature').textContent=featureName||'Denne funksjonen';
+  return false;
 }
 function closePaywall(){document.getElementById('paywall-modal').style.display='none';}
 function updateProUI(){
+  document.querySelectorAll('.pro-lock').forEach(el=>{
+    el.style.display = window._userPro ? 'none' : 'flex';
+  });
+  document.querySelectorAll('.pro-content').forEach(el=>{
+    el.style.filter = window._userPro ? 'none' : 'blur(4px)';
+    el.style.pointerEvents = window._userPro ? 'auto' : 'none';
+  });
+}
+
 // PRO GATING DISABLED FOR TESTING — change back to: window._userPro?'none':'flex'
 document.querySelectorAll('.pro-lock').forEach(el=>{
 el.style.display='none';
