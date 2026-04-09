@@ -824,10 +824,13 @@ const COLS=['#16a34a','#2563eb','#9333ea','#0891b2','#d97706','#e11d48','#0f766e
 const TR=0.22,TS=0.378;
 const DEFAULT_GROWTH=0.04; // 4% annual property appreciation
 let D={properties:[],loans:[],goals:[],savings:[],links:[],incomes:[],budgetSavings:[],expenses:[],notes:'',wealthHistory:[],markets:[]};
-function save(){try{localStorage.setItem(KEY,JSON.stringify(D));if(window._userId&&window.cloudSave)window.cloudSave();}catch(e){}}
+window.D=D;
+function save(){try{window.D=D;localStorage.setItem(KEY,JSON.stringify(D));if(window._userId&&window.cloudSave)window.cloudSave();}catch(e){}}
+window.setD=function(newD){D=newD;window.D=D;};
 function load(){try{const d=localStorage.getItem(KEY);if(d)D={...D,...JSON.parse(d)};
 // Migrate from v7
 if(!d){const v7=localStorage.getItem('wOS_v7');if(v7)D={...D,...JSON.parse(v7)};}
+window.D=D;
 }catch(e){}}
 
 // ── NUMBER FORMATTING ──
@@ -2280,11 +2283,11 @@ checkOnboarding();
     // Load cloud data — prefer cloud over local
     const cloudData = await cloudLoad(user.uid);
     if(cloudData) {
-      const localHasData = window.D.properties.length > 0 || window.D.savings.length > 0 || window.D.incomes.length > 0;
+      const localHasData = window.D && (window.D.properties.length > 0 || window.D.savings.length > 0 || window.D.incomes.length > 0);
       if(!localHasData || confirm('Skylagrede data funnet. Vil du laste inn fra skyen? (Overskriver lokale data)')) {
         // Deep merge: use cloud data but ensure all required keys exist
         const defaults = {properties:[],savings:[],loans:[],incomes:[],expenses:[],budgetSavings:[],goals:[],links:[],wealthHistory:[]};
-        window.D = {...defaults, ...cloudData};
+        window.setD({...defaults, ...cloudData});
         window.save();
         window.renderProps(); window.renderLoans(); window.renderGoals();
         window.renderSavings && window.renderSavings();
