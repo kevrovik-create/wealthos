@@ -442,6 +442,14 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
   <div id="t-sim" style="display:none">
     <div class="card">
       <div class="card-hdr"><div class="card-ttl">📈 Formuesimulering</div><span class="pro-badge-inline" onclick="requirePro('Avansert simulering')">👑 PRO</span></div>
+      <div class="form-section">Simuleringsmodus</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="btn-ghost btn-sm" id="sim-mode-real" onclick="setSimMode('realistic')" style="flex:1;font-weight:700;border:2px solid #16a34a;background:#f0fdf4;color:#16a34a">🎯 Realistisk</button>
+        <button class="btn-ghost btn-sm" id="sim-mode-opt" onclick="setSimMode('optimistic')" style="flex:1;font-weight:700">🚀 Optimistisk</button>
+      </div>
+      <div id="sim-mode-info" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 12px;font-size:11px;color:#166534;margin-bottom:12px">
+        <strong>Realistisk:</strong> Håndhever lånegrenser (5× inntekt), EK-krav (15%), gjeldstak og cashflow-krav. Stopper kjøp når grensene nås.
+      </div>
       <div class="form-section">Startpunkt</div>
       <div class="fi-2col">
         <div class="fi-group"><label class="fi-label">Startformue (kr)</label><input class="fi fnum" id="sim-start" type="text" inputmode="decimal" placeholder="Auto fra data"/></div>
@@ -1332,83 +1340,272 @@ document.getElementById('ar').innerHTML=`<div class="analyzer-result"><div class
 }
 
 // ══════════════════════════════════════════════════════════════
-// ██ FIX #4: SIMULATION — Bank vs Net Worth separated
+// ██ SIMULATION ENGINE — Realistic financial model
 // ══════════════════════════════════════════════════════════════
+let _simMode = 'realistic';
+function setSimMode(mode){
+_simMode = mode;
+document.getElementById('sim-mode-real').style.cssText = 'flex:1;font-weight:700;' + (mode==='realistic' ? 'border:2px solid #16a34a;background:#f0fdf4;color:#16a34a' : '');
+document.getElementById('sim-mode-opt').style.cssText = 'flex:1;font-weight:700;' + (mode==='optimistic' ? 'border:2px solid #d97706;background:#fff7ed;color:#d97706' : '');
+document.getElementById('sim-mode-info').innerHTML = mode==='realistic'
+  ? '<strong>Realistisk:</strong> Håndhever lånegrenser (5× inntekt), EK-krav (15%), gjeldstak og cashflow-krav. Stopper kjøp når grensene nås.'
+  : '<strong>Optimistisk:</strong> Ingen begrensninger på lån eller EK. Best-case scenario — egner seg for å se potensial, ikke for beslutninger.';
+document.getElementById('sim-mode-info').style.background = mode==='realistic' ? '#f0fdf4' : '#fff7ed';
+document.getElementById('sim-mode-info').style.borderColor = mode==='realistic' ? '#bbf7d0' : '#fed7aa';
+document.getElementById('sim-mode-info').style.color = mode==='realistic' ? '#166534' : '#92400e';
+}
+
+// Monthly compounding helper: grows balance with monthly contributions
+// Returns final value after `months` of monthly compounding
+function compoundMonthly(startBal, monthlyAdd, annualRate, months){
+const mr = annualRate / 100 / 12;
+let bal = startBal;
+for(let i = 0; i < months; i++){
+  bal += monthlyAdd;
+  bal *= (1 + mr);
+}
+return bal;
+}
+
+// Annuity: remaining balance after k months
+function annuityBalance(P, mr, m, k){
+if(!P || !mr || !m || k <= 0) return P || 0;
+const f = Math.pow(1 + mr, k);
+return Math.max(0, P * f - m * (f - 1) / mr);
+}
+
 function runSim(){
 if(!requirePro('Avansert simulering')) return;
-const t=tots();
-const start=gv('sim-start')||t.nw||0;
-const bankMon=gv('sim-bank')||0,stkMon=gv('sim-stk')||0,cryMon=gv('sim-cry')||0;
-const pg=gv('sim-pg')||4,sg=gv('sim-sg')||7,cg=gv('sim-cg')||10,bg=gv('sim-bg')||3;
-const yrs=Math.min(30,gv('sim-yrs')||10),tgt=gv('sim-tgt')||0;
-const pFreq=parseInt(document.getElementById('sim-pfreq').value)||0;
-const pVal=gv('sim-pval')||0,pEk=gv('sim-pek')||0,pRent=gv('sim-prent')||0;
-const pExp=gv('sim-pexp')||0;
-let pv=t.pv,pd=t.pd,stk=t.stk,cry=t.cry,bnk=t.bnk,pl=t.pl;
-// Track new properties separately for correct rent allocation
-let newProps=[];// {value, loan, rate, rent, expenses}
-let hit=null,labels=[],nwData=[],bankData=[],rows=[];
+const t = tots();
+const realistic = _simMode === 'realistic';
+const start = gv('sim-start') || t.nw || 0;
+const bankMon = gv('sim-bank') || 0, stkMon = gv('sim-stk') || 0, cryMon = gv('sim-cry') || 0;
+const pg = gv('sim-pg') || 4, sg = gv('sim-sg') || 7, cg = gv('sim-cg') || 10, bg = gv('sim-bg') || 3;
+const yrs = Math.min(30, gv('sim-yrs') || 10), tgt = gv('sim-tgt') || 0;
+const pFreq = parseInt(document.getElementById('sim-pfreq').value) || 0;
+const pVal = gv('sim-pval') || 0, pEk = gv('sim-pek') || 0, pRent = gv('sim-prent') || 0;
+const pExp = gv('sim-pexp') || 0;
+const pRate = 5.5, pYears = 25, DOC_FEE = 0.025; // 2.5% purchase costs
 
-for(let yr=1;yr<=yrs;yr++){
-// New property purchase
-if(pFreq>0&&pVal>0&&yr%pFreq===0){
-const newLoan=pVal-pEk;
-newProps.push({value:pVal,loan:newLoan,rate:5.5,rent:pRent,expenses:pExp});
-bnk=Math.max(0,bnk-pEk);
-}
-// Appreciate all property values
-pv*=(1+pg/100);
-newProps.forEach(np=>{np.value*=(1+pg/100);});
-// Existing portfolio debt paydown (4% of remaining per year)
-pd=Math.max(0,pd*(1-0.04));
-pl=Math.max(0,pl*0.85);
+// Starting balances — separate per asset class
+let stk = t.stk, cry = t.cry, bnk = t.bnk;
+let pl = t.pl; // personal loans
 
-// ── FIX #4: Rent flows through NET CASH FLOW, not direct to bank ──
-// For each new property: Net CF = (rent - expenses - mortgage) + interest tax shield
-let newPropNetCF=0;
-let newPropTotalValue=0;
-let newPropTotalDebt=0;
-newProps.forEach(np=>{
-const mMort=calcLoan(np.loan,np.rate,25,'annuity').avg;
-const intM=np.loan*np.rate/100/12;
-const netCF=(np.rent-np.expenses-mMort)+(intM*TR);
-newPropNetCF+=netCF*12;
-// Principal paydown
-const principalPaid=Math.max(0,mMort*12-np.loan*np.rate/100);
-np.loan=Math.max(0,np.loan-principalPaid);
-newPropTotalValue+=np.value;
-newPropTotalDebt+=np.loan;
+// Track ALL properties (existing + new) individually for accurate amortization
+let props = [];
+// Import existing properties
+D.properties.filter(p => p.proptype !== 'primary').forEach(p => {
+  const loanObj = calcLoan(p.loan, p.rate, p.years || 25, p.ltype || 'annuity');
+  const holdYrs = Math.max(0, new Date().getFullYear() - (p.purchaseYear || new Date().getFullYear()));
+  props.push({
+    value: p.value || p.purchase || 0,
+    origLoan: p.loan || 0,
+    loan: p.loan || 0,
+    rate: p.rate || 5.5,
+    years: p.years || 25,
+    monthlyPayment: loanObj.avg,
+    mr: loanObj.mr || 0,
+    rent: p.rent || 0,
+    expenses: p.expenses || 0,
+    monthsHeld: holdYrs * 12,
+    ownershipCost: (p.ownershipCost || 0) / 100
+  });
+});
+// Existing primary properties (costs only, no rental income)
+let primaryProps = [];
+D.properties.filter(p => p.proptype === 'primary').forEach(p => {
+  const loanObj = calcLoan(p.loan, p.rate, p.years || 25, p.ltype || 'annuity');
+  const holdYrs = Math.max(0, new Date().getFullYear() - (p.purchaseYear || new Date().getFullYear()));
+  primaryProps.push({
+    value: p.value || p.purchase || 0,
+    origLoan: p.loan || 0,
+    loan: p.loan || 0,
+    rate: p.rate || 5.5,
+    years: p.years || 25,
+    monthlyPayment: loanObj.avg,
+    mr: loanObj.mr || 0,
+    monthsHeld: holdYrs * 12,
+    hcost: p.hcost || 0,
+    ownershipCost: (p.ownershipCost || 0) / 100
+  });
 });
 
-// Existing rental net CF (already computed in tots)
-const existingRentalCF=t.rentalCf*12;
+const grossAnnualIncome = t.ti * 12;
+let hit = null, labels = [], nwData = [], bankData = [], stkData = [], propEqData = [];
+let rows = [], blockedMsgs = [], purchaseCount = 0;
 
-// Bank: only grows by net cash flow + savings + bank interest
-// NOT by gross rent
-stk=stk*(1+sg*(1-TS)/100)+stkMon*12;
-cry=cry*(1+cg*(1-TS)/100)+cryMon*12;
-bnk=bnk*(1+bg/100)+bankMon*12+newPropNetCF+existingRentalCF;
+for(let yr = 1; yr <= yrs; yr++){
+  let purchasedThisYear = false;
+  let blockedReason = '';
 
-// Net worth = all assets - all debts
-const totalPropValue=pv+newPropTotalValue;
-const totalDebt=pd+pl+newPropTotalDebt;
-const net=totalPropValue+stk+cry+bnk-totalDebt;
+  // ── PROPERTY PURCHASE (start of year) ──
+  if(pFreq > 0 && pVal > 0 && yr % pFreq === 0){
+    const totalPurchaseCost = pVal * DOC_FEE; // 2.5% doc fee
+    const totalEkNeeded = pEk + totalPurchaseCost;
+    const newLoan = pVal - pEk;
 
-if(tgt&&net>=tgt&&!hit)hit=yr;
-labels.push('År '+yr);
-nwData.push(Math.round(net));
-bankData.push(Math.round(bnk));
+    if(realistic){
+      // Calculate current state for constraints
+      const totalPropValue = props.reduce((s, p) => s + p.value, 0) + primaryProps.reduce((s, p) => s + p.value, 0);
+      const totalPropDebt = props.reduce((s, p) => s + p.loan, 0) + primaryProps.reduce((s, p) => s + p.loan, 0);
+      const totalDebtNow = totalPropDebt + pl + newLoan;
 
-const isH=tgt&&net>=tgt&&hit===yr;
-const isP=pFreq>0&&yr%pFreq===0&&pVal>0;
-rows.push(`<div style="display:flex;justify-content:space-between;padding:10px 12px;background:${isH?'#dcfce7':'#fff'};border-radius:10px;margin-bottom:6px;border:1px solid ${isH?'#16a34a':'#f1f5f9'}"><div style="font-size:13px;font-weight:700;color:#64748b">År ${yr}${isP?' 🏘️ +eiendom':''}${isH?' 🎯 MÅL NÅDD':''}</div><div style="text-align:right"><div style="font-size:15px;font-weight:900;color:#16a34a">kr ${fmtK(Math.round(net))}</div><div style="font-size:10px;color:#94a3b8">EK ${fmtK(Math.round(totalPropValue-totalDebt))} | Inv ${fmtK(Math.round(stk+cry))} | Bank ${fmtK(Math.round(bnk))}</div></div></div>`);
+      // Available equity: sum of (equity - locked) for each property + bank
+      let availEq = bnk;
+      props.forEach(p => { const eq = p.value - p.loan; availEq += Math.max(0, eq - p.value * 0.15); });
+      primaryProps.forEach(p => { const eq = p.value - p.loan; availEq += Math.max(0, eq - p.value * 0.10); });
+
+      // Net rental income for bank income calculation
+      const netRentalAnn = props.reduce((s, p) => {
+        const taxable = Math.max(0, p.rent - p.expenses - p.value * p.ownershipCost / 12);
+        return s + (p.rent - p.expenses - p.value * p.ownershipCost / 12 - taxable * TR);
+      }, 0) * 12;
+      const totalIncomeForBank = grossAnnualIncome + Math.max(0, netRentalAnn);
+      const maxTotalDebt = totalIncomeForBank * 5;
+
+      // Check all constraints
+      let canBuy = true;
+      if(availEq < totalEkNeeded){
+        canBuy = false;
+        blockedReason = `Mangler EK: trenger kr ${fmtK(Math.round(totalEkNeeded))}, har kr ${fmtK(Math.round(availEq))} tilgjengelig`;
+      } else if(totalDebtNow > maxTotalDebt){
+        canBuy = false;
+        blockedReason = `Gjeld (kr ${fmtK(Math.round(totalDebtNow))}) overstiger 5× inntekt (kr ${fmtK(Math.round(maxTotalDebt))})`;
+      } else {
+        // Cashflow check: total mortgage payments shouldn't exceed ~60% of monthly income
+        const totalMortgage = props.reduce((s, p) => s + p.monthlyPayment, 0) + primaryProps.reduce((s, p) => s + p.monthlyPayment, 0);
+        const newMort = calcLoan(newLoan, pRate, pYears, 'annuity').avg;
+        if(t.ti > 0 && (totalMortgage + newMort) / t.ti > 0.6){
+          canBuy = false;
+          blockedReason = `Terminbeløp (${fmtD((totalMortgage + newMort) / t.ti * 100)}% av inntekt) overstiger 60%-grensen`;
+        }
+      }
+
+      if(canBuy){
+        const loanObj = calcLoan(newLoan, pRate, pYears, 'annuity');
+        props.push({ value: pVal, origLoan: newLoan, loan: newLoan, rate: pRate, years: pYears, monthlyPayment: loanObj.avg, mr: loanObj.mr, rent: pRent, expenses: pExp, monthsHeld: 0, ownershipCost: 0 });
+        bnk = Math.max(0, bnk - totalEkNeeded);
+        purchasedThisYear = true;
+        purchaseCount++;
+      } else {
+        blockedMsgs.push({ yr, reason: blockedReason });
+      }
+    } else {
+      // Optimistic mode — no constraints
+      const loanObj = calcLoan(newLoan, pRate, pYears, 'annuity');
+      props.push({ value: pVal, origLoan: newLoan, loan: newLoan, rate: pRate, years: pYears, monthlyPayment: loanObj.avg, mr: loanObj.mr, rent: pRent, expenses: pExp, monthsHeld: 0, ownershipCost: 0 });
+      bnk = Math.max(0, bnk - totalEkNeeded);
+      purchasedThisYear = true;
+      purchaseCount++;
+    }
+  }
+
+  // ── MONTHLY SIMULATION (12 months) ──
+  for(let month = 0; month < 12; month++){
+    // Investments: monthly contribution + monthly compounding
+    stk = (stk + stkMon) * (1 + sg / 100 / 12);
+    cry = (cry + cryMon) * (1 + cg / 100 / 12);
+
+    // Bank: monthly contribution + monthly compounding + net rental CF
+    let monthlyRentalCF = 0;
+    props.forEach(p => {
+      const ownCostM = p.value * p.ownershipCost / 12;
+      const taxableR = Math.max(0, p.rent - p.expenses - ownCostM);
+      const rTax = taxableR * TR;
+      const netRent = p.rent - p.expenses - ownCostM - rTax;
+      const intM = p.loan * p.rate / 100 / 12;
+      const interestDeduction = intM * TR;
+      monthlyRentalCF += netRent - p.monthlyPayment + interestDeduction;
+    });
+    // Primary property costs
+    primaryProps.forEach(p => {
+      const ownCostM = p.value * p.ownershipCost / 12;
+      monthlyRentalCF -= (p.hcost || 0) + ownCostM;
+      // Primary mortgage is paid but no income
+      monthlyRentalCF -= p.monthlyPayment;
+      const intM = p.loan * p.rate / 100 / 12;
+      monthlyRentalCF += intM * TR; // interest deduction
+    });
+
+    bnk = (bnk + bankMon + monthlyRentalCF) * (1 + bg / 100 / 12);
+
+    // Amortize all loans monthly
+    props.forEach(p => {
+      if(p.loan > 0 && p.mr > 0){
+        const intM = p.loan * p.mr;
+        const prinM = Math.min(p.monthlyPayment - intM, p.loan);
+        p.loan = Math.max(0, p.loan - prinM);
+      }
+      p.monthsHeld++;
+    });
+    primaryProps.forEach(p => {
+      if(p.loan > 0 && p.mr > 0){
+        const intM = p.loan * p.mr;
+        const prinM = Math.min(p.monthlyPayment - intM, p.loan);
+        p.loan = Math.max(0, p.loan - prinM);
+      }
+      p.monthsHeld++;
+    });
+  }
+
+  // ── ANNUAL APPRECIATION ──
+  props.forEach(p => { p.value *= (1 + pg / 100); });
+  primaryProps.forEach(p => { p.value *= (1 + pg / 100); });
+
+  // Personal loan paydown
+  pl = Math.max(0, pl * 0.85);
+
+  // ── YEAR-END SNAPSHOT ──
+  const totalPropValue = props.reduce((s, p) => s + p.value, 0) + primaryProps.reduce((s, p) => s + p.value, 0);
+  const totalPropDebt = props.reduce((s, p) => s + p.loan, 0) + primaryProps.reduce((s, p) => s + p.loan, 0);
+  const totalDebt = totalPropDebt + pl;
+  // Apply capital gains tax on investments for NW calculation (unrealized, 37.8%)
+  const stkAfterTax = t.stk > 0 ? stk - Math.max(0, stk - t.stk) * TS : stk;
+  const cryAfterTax = t.cry > 0 ? cry - Math.max(0, cry - t.cry) * TS : cry;
+  const net = totalPropValue + stk + cry + bnk - totalDebt;
+
+  if(tgt && net >= tgt && !hit) hit = yr;
+  labels.push('År ' + yr);
+  nwData.push(Math.round(net));
+  bankData.push(Math.round(bnk));
+  stkData.push(Math.round(stk + cry));
+  propEqData.push(Math.round(totalPropValue - totalPropDebt));
+
+  const isH = tgt && net >= tgt && hit === yr;
+  const propCount = props.length + primaryProps.length;
+  rows.push(`<div style="display:flex;justify-content:space-between;padding:10px 12px;background:${isH ? '#dcfce7' : blockedReason && !purchasedThisYear && yr % pFreq === 0 ? '#fef2f2' : '#fff'};border-radius:10px;margin-bottom:6px;border:1px solid ${isH ? '#16a34a' : '#f1f5f9'}"><div style="flex:1"><div style="font-size:13px;font-weight:700;color:#64748b">År ${yr}${purchasedThisYear ? ' 🏘️ +eiendom' : ''}${isH ? ' 🎯 MÅL NÅDD' : ''}${blockedReason && !purchasedThisYear && yr % pFreq === 0 ? ' 🚫' : ''}</div>${blockedReason && !purchasedThisYear && yr % pFreq === 0 ? '<div style="font-size:10px;color:#dc2626;margin-top:2px">' + blockedReason + '</div>' : ''}</div><div style="text-align:right;flex-shrink:0"><div style="font-size:15px;font-weight:900;color:#16a34a">kr ${fmtK(Math.round(net))}</div><div style="font-size:10px;color:#94a3b8">Eiendom ${fmtK(Math.round(totalPropValue - totalPropDebt))} | Inv ${fmtK(Math.round(stk + cry))} | Bank ${fmtK(Math.round(bnk))}</div></div></div>`);
+  blockedReason = '';
 }
-const fin=nwData[nwData.length-1],grw=start?(fin-start)/start*100:0;
-const finBank=bankData[bankData.length-1];
-const totMon=bankMon+stkMon+cryMon;
-const freqTxt=pFreq===0?'ingen nye kjøp':pFreq===1?'hvert år':'hvert '+pFreq+'. år';
-document.getElementById('sim-result').innerHTML=`<div class="action purple" style="margin-bottom:12px"><div class="action-headline">🤖 AI-analyse: ${yrs}-års prognose</div><div class="action-body">Estimert <strong>netto formue: kr ${fmtK(fin)}</strong> — vekst ${fmtD(grw)}%.<br><strong>Bankkonto: kr ${fmtK(finBank)}</strong> (øker kun via netto cashflow).<br>Forskjellen skyldes avdrag + prisvekst som bygger formue uten å synes på konto.${pFreq>0&&newProps.length>0?` ${newProps.length} planlagte eiendomskjøp (${freqTxt}).`:''} ${tgt&&hit?` Når kr ${fmtK(tgt)} i <strong>år ${hit}</strong>.`:tgt?` Når ikke kr ${fmtK(tgt)} på ${yrs} år — øk sparing eller forleng horisonten.`:''}</div></div><div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:12px"><div style="height:220px"><canvas id="simC"></canvas></div></div>${rows.join('')}`;
-setTimeout(()=>{const ctx=document.getElementById('simC');if(!ctx)return;if(C.sim)C.sim.destroy();C.sim=new Chart(ctx,{type:'line',data:{labels,datasets:[{label:'Netto formue',data:nwData,borderColor:'#16a34a',backgroundColor:'rgba(22,163,74,.1)',fill:true,tension:.4,pointRadius:2,borderWidth:2},{label:'Bankkonto',data:bankData,borderColor:'#0891b2',backgroundColor:'rgba(8,145,178,.05)',fill:false,tension:.4,pointRadius:2,borderWidth:2,borderDash:[4,2]},...(tgt?[{label:'Mål',data:Array(yrs).fill(tgt),borderColor:'#d97706',borderDash:[6,3],borderWidth:2,pointRadius:0,fill:false}]:[])]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{boxWidth:10}}},scales:{y:{ticks:{callback:v=>'kr '+fmtK(v)},grid:{color:'#f1f5f9'}},x:{grid:{display:false}}}}});},100);
+
+const fin = nwData[nwData.length - 1], grw = start ? (fin - start) / start * 100 : 0;
+const finBank = bankData[bankData.length - 1];
+const finStk = stkData[stkData.length - 1];
+const finPropEq = propEqData[propEqData.length - 1];
+const freqTxt = pFreq === 0 ? 'ingen nye kjøp' : pFreq === 1 ? 'hvert år' : 'hvert ' + pFreq + '. år';
+const modeLabel = realistic ? '🎯 Realistisk' : '🚀 Optimistisk';
+
+// Blocked summary
+let blockHtml = '';
+if(blockedMsgs.length > 0){
+  blockHtml = `<div class="action bad" style="margin-bottom:10px"><div class="action-headline">🚫 ${blockedMsgs.length} planlagte kjøp ble blokkert</div><div class="action-body">${blockedMsgs.slice(0, 3).map(b => '<div>År ' + b.yr + ': ' + b.reason + '</div>').join('')}${blockedMsgs.length > 3 ? '<div>...og ' + (blockedMsgs.length - 3) + ' til</div>' : ''}</div><span class="action-step">Øk inntekt, spar mer EK, eller betal ned gjeld for å låse opp flere kjøp</span></div>`;
+}
+
+// Verification line for bank savings
+const bankVerify = compoundMonthly(t.bnk, bankMon, bg, yrs * 12);
+
+document.getElementById('sim-result').innerHTML = `<div class="action purple" style="margin-bottom:12px"><div class="action-headline">🤖 AI-analyse: ${yrs}-års prognose (${modeLabel})</div><div class="action-body">Estimert <strong>netto formue: kr ${fmtK(fin)}</strong> — vekst ${fmtD(grw)}%.<br><strong>Bankkonto: kr ${fmtK(finBank)}</strong> | <strong>Aksjer/fond: kr ${fmtK(finStk)}</strong> | <strong>Eiendom EK: kr ${fmtK(finPropEq)}</strong><br>Månedlig kompoundering per aktivaklasse. Avdrag og prisvekst bygger formue uten å synes på konto.${purchaseCount > 0 ? ` ${purchaseCount} eiendomskjøp gjennomført (${freqTxt}).` : ''}${pFreq > 0 && purchaseCount === 0 ? ' Ingen kjøp gjennomført — begrensninger nådd.' : ''} ${tgt && hit ? ` Når kr ${fmtK(tgt)} i <strong>år ${hit}</strong>.` : tgt ? ` Når ikke kr ${fmtK(tgt)} på ${yrs} år.` : ''}</div></div>${blockHtml}<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:12px"><div style="height:240px"><canvas id="simC"></canvas></div></div>${rows.join('')}`;
+
+setTimeout(() => {
+  const ctx = document.getElementById('simC'); if(!ctx) return;
+  if(C.sim) C.sim.destroy();
+  C.sim = new Chart(ctx, { type: 'line', data: { labels, datasets: [
+    { label: 'Netto formue', data: nwData, borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,.1)', fill: true, tension: .4, pointRadius: 2, borderWidth: 2 },
+    { label: 'Eiendom EK', data: propEqData, borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,.05)', fill: false, tension: .4, pointRadius: 2, borderWidth: 2 },
+    { label: 'Aksjer/krypto', data: stkData, borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,.05)', fill: false, tension: .4, pointRadius: 2, borderWidth: 2 },
+    { label: 'Bankkonto', data: bankData, borderColor: '#0891b2', backgroundColor: 'rgba(8,145,178,.05)', fill: false, tension: .4, pointRadius: 2, borderWidth: 2, borderDash: [4, 2] },
+    ...(tgt ? [{ label: 'Mål', data: Array(yrs).fill(tgt), borderColor: '#dc2626', borderDash: [6, 3], borderWidth: 2, pointRadius: 0, fill: false }] : [])
+  ]}, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { boxWidth: 10 } } }, scales: { y: { ticks: { callback: v => 'kr ' + fmtK(v) }, grid: { color: '#f1f5f9' } }, x: { grid: { display: false } } } } });
+}, 100);
 }
 
 // ── SCENARIOS ──
@@ -1418,8 +1615,8 @@ const yrs=gv('sc-yrs')||10,cap=gv('sc-cap')||10000,pg=gv('sc-pg')||4,sg=gv('sc-s
 const t=tots(),base=t.nw||0;
 const sc=[
 {name:'📈 Aksjer/fond',desc:'Alt i indeksfond ('+sg+'%/år, 37.8% skatt)',
-calc:()=>{let inv=0;for(let y=1;y<=yrs;y++)inv=(inv+cap*12)*(1+sg*(1-TS)/100);return base+inv;},
-tip:`Enklest, likvid. 37.8% gevinstskatt. Historisk 7–9%/år.`},
+calc:()=>{let inv=0;for(let m=0;m<yrs*12;m++){inv=(inv+cap)*(1+sg/100/12);}const gain=Math.max(0,inv-cap*yrs*12);return base+inv-gain*TS;},
+tip:`Enklest, likvid. 37.8% gevinstskatt. Historisk 7–9%/år. Månedlig kompoundering.`},
 {name:'🏘️ Ny utleieeiendom',desc:'EK i eiendom ('+pg+'%/år vekst)',
 calc:()=>{const eqS=cap*12*3,pp=eqS/0.15,ln=pp*0.85,intM=ln*0.055/12,mMort=calcLoan(ln,5.5,25,'annuity').avg,princM=mMort-intM,rent=pp*0.05/12,exp=rent*0.2,netCF=(rent-exp-mMort)+(intM*TR);let bank=0,propEq=eqS;for(let y=1;y<=Math.max(0,yrs-3);y++){bank+=netCF*12;propEq+=princM*12+pp*pg/100;}return base+bank+propEq;},
 tip:`Gearing og prisvekst kraftfullt. 22% skatt på leie og gevinst. Cashflow kan være nær 0.`},
@@ -1499,11 +1696,15 @@ let propV=t.pv,propD=t.pd,stkV=t.stk,cryV=t.cry,bnkV=t.bnk;
 let hit=null;
 const labels=['Nå'],propData=[Math.round(propV-propD)],stkData=[Math.round(stkV)],cryData=[Math.round(cryV)],bnkData=[Math.round(bnkV)],totData=[Math.round(propV-propD+stkV+cryV+bnkV)];
 for(let yr=1;yr<=maxYrs;yr++){
-propV*=(1+pg/100);propD=Math.max(0,propD*0.96);
-stkV=stkV*(1+sg*(1-TS)/100)+stkMon*12;
-cryV=cryV*(1+cg*(1-TS)/100)+cryMon*12;
-// Bank only grows by net cash flow + savings
-bnkV=bnkV*(1+bg/100)+bnkMon*12+t.rentalCf*12;
+propV*=(1+pg/100);
+// Dynamic principal paydown using remaining balance
+if(propD>0){const annPrin=propD*0.04+propD*(pg/100)*0.5;propD=Math.max(0,propD-annPrin);}
+// Monthly compounding for investments
+for(let m=0;m<12;m++){
+  stkV=(stkV+stkMon)*(1+sg/100/12);
+  cryV=(cryV+cryMon)*(1+cg/100/12);
+  bnkV=(bnkV+bnkMon+t.rentalCf)*(1+bg/100/12);
+}
 const nw=propV-propD+stkV+cryV+bnkV;
 if(target&&nw>=target&&!hit)hit=yr;
 labels.push('År '+yr);propData.push(Math.round(propV-propD));stkData.push(Math.round(stkV));cryData.push(Math.round(cryV));bnkData.push(Math.round(bnkV));totData.push(Math.round(nw));
@@ -1526,10 +1727,13 @@ let propV=t.pv,propD=t.pd,stkV=t.stk,cryV=t.cry,bnkV=t.bnk;
 const labels=['Nå'],pD=[propV-propD],sD=[stkV],cD=[cryV],bD=[bnkV],totD=[propV-propD+stkV+cryV+bnkV];
 const yrs=Math.min(20,g.target?30:15);
 for(let yr=1;yr<=yrs;yr++){
-propV*=(1+pg/100);propD=Math.max(0,propD*0.96);
-stkV=stkV*(1+sg*(1-TS)/100)+stkMon*12;
-cryV=cryV*(1+cg*(1-TS)/100)+cryMon*12;
-bnkV=bnkV*(1+bg/100)+bnkMon*12+t.rentalCf*12;
+propV*=(1+pg/100);
+if(propD>0){const annPrin=propD*0.04+propD*(pg/100)*0.5;propD=Math.max(0,propD-annPrin);}
+for(let m=0;m<12;m++){
+  stkV=(stkV+stkMon)*(1+sg/100/12);
+  cryV=(cryV+cryMon)*(1+cg/100/12);
+  bnkV=(bnkV+bnkMon+t.rentalCf)*(1+bg/100/12);
+}
 labels.push('År '+yr);pD.push(Math.round(propV-propD));sD.push(Math.round(stkV));cD.push(Math.round(cryV));bD.push(Math.round(bnkV));totD.push(Math.round(propV-propD+stkV+cryV+bnkV));
 }
 const cid='freeC-'+g.id,ctx=document.getElementById(cid);if(!ctx)return;
