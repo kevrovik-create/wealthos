@@ -698,7 +698,7 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin-bottom:12px">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #e2e8f0"><span style="font-size:12px;color:#64748b">Synkronisering</span><span style="font-size:12px;font-weight:700;color:#16a34a">✓ Aktiv</span></div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #e2e8f0"><span style="font-size:12px;color:#64748b">Sist lagret</span><span style="font-size:12px;font-weight:600" id="profile-lastsave">—</span></div>
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0"><span style="font-size:12px;color:#64748b">Enheter</span><span style="font-size:12px;font-weight:600">1 aktiv</span></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0"><span style="font-size:12px;color:#64748b">Skystatus</span><span style="font-size:12px;font-weight:600">Pålogget</span></div>
         </div>
         <button class="btn-ghost btn-full" onclick="doLogout()" style="color:#dc2626;border-color:#fecaca">Logg ut</button>
       </div>
@@ -2702,5 +2702,1000 @@ window.startProSubscription = async () => {
   });
 
   </script>
+<script>
+(() => {
+  "use strict";
+
+  const CAPITAL_TAX = 0.22;
+  const STOCK_TAX = 0.3784;
+  const MORTGAGE_LTV = 0.9;
+  const STRESS_ADD = 0.03;
+  const STRESS_FLOOR = 0.07;
+  const SELLING_COST_RATE = 0.025;
+  const DEFAULT_RETURNS = {
+    bank: 0.03,
+    stocks: 0.07,
+    crypto: 0.1,
+    bonds: 0.04,
+    other: 0.03,
+  };
+
+  const originalConfirm = window.confirm.bind(window);
+
+  function taxRateForAsset(type) {
+    if (type === "stocks") return STOCK_TAX;
+    return CAPITAL_TAX;
+  }
+
+  function defaultReturnForType(type) {
+    return DEFAULT_RETURNS[type] ?? DEFAULT_RETURNS.other;
+  }
+
+  function grossAnnualReturnForAccount(account) {
+    const explicit = Number(account?.return || 0);
+    if (explicit > 0) return explicit / 100;
+    return defaultReturnForType(account?.type);
+  }
+
+  function money(v) {
+    return typeof fmtK === "function" ? fmtK(Math.round(v || 0)) : Math.round(v || 0).toLocaleString("nb-NO");
+  }
+
+  function monthMoney(v) {
+    return typeof fmt === "function" ? fmt(Math.round(v || 0)) : Math.round(v || 0).toLocaleString("nb-NO");
+  }
+
+  function pct(v, digits = 1) {
+    return typeof fmtD === "function" ? fmtD(v || 0, digits) : Number(v || 0).toFixed(digits).replace(".", ",");
+  }
+
+  function savingsBreakdown() {
+    const out = {
+      bank: 0,
+      stocks: 0,
+      crypto: 0,
+      bonds: 0,
+      other: 0,
+      afterTaxAnnualReturn: 0,
+      grossAnnualReturn: 0,
+    };
+
+    (window.D?.savings || []).forEach((account) => {
+      const type = account.type || "other";
+      const amount = Number(account.amount || 0);
+      const gross = grossAnnualReturnForAccount(account);
+      const afterTax = gross * (1 - taxRateForAsset(type));
+      if (!(type in out)) out.other += amount;
+      else out[type] += amount;
+      out.grossAnnualReturn += amount * gross;
+      out.afterTaxAnnualReturn += amount * afterTax;
+    });
+
+    out.total = out.bank + out.stocks + out.crypto + out.bonds + out.other;
+    return out;
+  }
+
+  function budgetSavingsFlows() {
+    const out = { bank: 0, stocks: 0, crypto: 0, bonds: 0, other: 0 };
+    (window.D?.budgetSavings || []).forEach((item) => {
+      const type = item.type || "other";
+      if (type in out) out[type] += Number(item.amount || 0);
+      else out.other += Number(item.amount || 0);
+    });
+    return out;
+  }
+
+  function buildPropertyState(property) {
+    const isPrimary = property.proptype === "primary";
+    const value = Number(property.value || property.purchase || 0);
+    const loanBalance = Number(property.loan || 0);
+    const rate = Number(property.rate || 0) / 100;
+    const loanCalc = typeof calcLoan === "function"
+      ? calcLoan(loanBalance, Number(property.rate || 0), Number(property.years || 25), property.ltype || "annuity")
+      : { avg: 0, mr: rate / 12 };
+
+    return {
+      id: property.id,
+      isPrimary,
+      value,
+      loanBalance,
+      annualRate: rate,
+      monthlyRate: loanCalc.mr || rate / 12,
+      monthlyPayment: Number(loanCalc.avg || 0),
+      rent: Number(property.rent || 0),
+      expenses: Number(property.expenses || 0),
+      hcost: Number(property.hcost || 0),
+      ownershipCostPct: Number(property.ownershipCost || 0) / 100,
+      name: property.name || "Eiendom",
+    };
+  }
+
+  function buildPersonalLoanState(loan) {
+    const amount = Number(loan.amount || 0);
+    const rate = Number(loan.rate || 0) / 100;
+    const loanCalc = typeof calcLoan === "function"
+      ? calcLoan(amount, Number(loan.rate || 0), Number(loan.years || 5), loan.type || "annuity")
+      : { avg: 0, mr: rate / 12 };
+    return {
+      id: loan.id,
+      amount,
+      annualRate: rate,
+      monthlyRate: loanCalc.mr || rate / 12,
+      monthlyPayment: Number(loanCalc.avg || 0),
+      type: loan.type || "annuity",
+      name: loan.name || "Lån",
+    };
+  }
+
+  function liquidAndRefiCapacity() {
+    const properties = (window.D?.properties || []).map(buildPropertyState);
+    let refinanceableEquity = 0;
+
+    properties.forEach((property) => {
+      const maxLoan = property.value * MORTGAGE_LTV;
+      refinanceableEquity += Math.max(0, maxLoan - property.loanBalance);
+    });
+
+    const savings = savingsBreakdown();
+    return {
+      cashNow: savings.bank,
+      refinanceableEquity,
+      totalPotentialDownPayment: savings.bank + refinanceableEquity,
+    };
+  }
+
+  function projectedNetRentalAnnual(propertyState) {
+    const ownCost = propertyState.value * propertyState.ownershipCostPct / 12;
+    const taxable = Math.max(0, propertyState.rent - propertyState.expenses - ownCost);
+    const tax = taxable * CAPITAL_TAX;
+    return (propertyState.rent - propertyState.expenses - ownCost - tax) * 12;
+  }
+
+  function patchedTotals() {
+    const rentals = (window.D?.properties || []).filter((p) => p.proptype !== "primary");
+    const primary = (window.D?.properties || []).filter((p) => p.proptype === "primary");
+    const propertyValue = (window.D?.properties || []).reduce((sum, p) => sum + Number(p.value || p.purchase || 0), 0);
+    const propertyDebt = (window.D?.properties || []).reduce((sum, p) => sum + Number(p.loan || 0), 0);
+    const personalDebt = (window.D?.loans || []).reduce((sum, loan) => sum + Number(loan.amount || 0), 0);
+    const savings = savingsBreakdown();
+    const incomeMonthly = (window.D?.incomes || []).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const savingsMonthly = (window.D?.budgetSavings || []).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const expensesMonthly = (window.D?.expenses || []).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const rentalCashflow = rentals.reduce((sum, property) => sum + (typeof propM === "function" ? propM(property).cfPost : 0), 0);
+    const totalInterestMonthly =
+      (window.D?.properties || []).reduce((sum, p) => sum + Number(p.loan || 0) * Number(p.rate || 0) / 100 / 12, 0) +
+      (window.D?.loans || []).reduce((sum, loan) => sum + Number(loan.amount || 0) * Number(loan.rate || 0) / 100 / 12, 0);
+
+    const equityNow = liquidAndRefiCapacity();
+    const netWorth = propertyValue + savings.total - propertyDebt - personalDebt;
+    const grossYields = rentals
+      .map((property) => (typeof propM === "function" ? propM(property).grossY : 0))
+      .filter((v) => v > 0);
+
+    return {
+      pv: propertyValue,
+      pd: propertyDebt,
+      peR: rentals.reduce((sum, property) => sum + (typeof propM === "function" ? propM(property).eq : 0), 0),
+      stk: savings.stocks,
+      cry: savings.crypto,
+      bnk: savings.bank + savings.bonds + savings.other,
+      tsav: savings.total,
+      pl: personalDebt,
+      td: propertyDebt + personalDebt,
+      nw: netWorth,
+      tr: rentals.reduce((sum, property) => sum + Number(property.rent || 0), 0),
+      rentalCf: rentalCashflow,
+      intTaxRed: totalInterestMonthly * CAPITAL_TAX,
+      totalIntMonth: totalInterestMonthly,
+      ay: grossYields.length ? grossYields.reduce((a, b) => a + b, 0) / grossYields.length : 0,
+      ti: incomeMonthly,
+      tbs: savingsMonthly,
+      texp: expensesMonthly,
+      rem: incomeMonthly - savingsMonthly - expensesMonthly,
+      sr: incomeMonthly ? (savingsMonthly / incomeMonthly) * 100 : 0,
+      rentals,
+      primary,
+      cashNow: equityNow.cashNow,
+      refinanceableEquity: equityNow.refinanceableEquity,
+      totalAvailable: equityNow.totalPotentialDownPayment,
+      savingsAfterTaxAnnualReturn: savings.afterTaxAnnualReturn,
+      savingsGrossAnnualReturn: savings.grossAnnualReturn,
+    };
+  }
+
+  function projectPortfolio(options = {}) {
+    const years = Math.max(1, Math.min(40, Number(options.years || 30)));
+    const propertyGrowth = Number(options.propertyGrowth ?? 0.04);
+    const stockGrowth = Number(options.stockGrowth ?? 0.07);
+    const cryptoGrowth = Number(options.cryptoGrowth ?? 0.1);
+    const bankGrowth = Number(options.bankGrowth ?? 0.03);
+    const monthlyBank = Number(options.monthlyBank || 0);
+    const monthlyStocks = Number(options.monthlyStocks || 0);
+    const monthlyCrypto = Number(options.monthlyCrypto || 0);
+    const monthlyOther = Number(options.monthlyOther || 0);
+    const target = Number(options.target || 0);
+
+    const properties = (window.D?.properties || []).map(buildPropertyState);
+    const personalLoans = (window.D?.loans || []).map(buildPersonalLoanState);
+    const savings = savingsBreakdown();
+    let stocks = savings.stocks;
+    let crypto = savings.crypto;
+    let bank = savings.bank + savings.bonds + savings.other;
+
+    const yearly = [];
+    let hitYear = null;
+
+    for (let year = 1; year <= years; year += 1) {
+      for (let month = 0; month < 12; month += 1) {
+        let portfolioCashflow = 0;
+
+        properties.forEach((property) => {
+          const ownCost = property.value * property.ownershipCostPct / 12;
+          const interest = property.loanBalance * property.annualRate / 12;
+          const interestDeduction = interest * CAPITAL_TAX;
+
+          if (property.isPrimary) {
+            portfolioCashflow -= property.hcost + ownCost + property.monthlyPayment - interestDeduction;
+          } else {
+            const taxableProfit = Math.max(0, property.rent - property.expenses - ownCost);
+            const rentalTax = taxableProfit * CAPITAL_TAX;
+            const netRental = property.rent - property.expenses - ownCost - rentalTax;
+            portfolioCashflow += netRental - property.monthlyPayment + interestDeduction;
+          }
+
+          if (property.loanBalance > 0 && property.monthlyPayment > 0) {
+            const monthlyInterest = property.loanBalance * (property.monthlyRate || property.annualRate / 12);
+            const principal = Math.max(0, Math.min(property.monthlyPayment - monthlyInterest, property.loanBalance));
+            property.loanBalance = Math.max(0, property.loanBalance - principal);
+          }
+        });
+
+        personalLoans.forEach((loan) => {
+          if (loan.amount > 0 && loan.monthlyPayment > 0) {
+            const monthlyInterest = loan.amount * (loan.monthlyRate || loan.annualRate / 12);
+            const principal = Math.max(0, Math.min(loan.monthlyPayment - monthlyInterest, loan.amount));
+            loan.amount = Math.max(0, loan.amount - principal);
+            portfolioCashflow -= loan.monthlyPayment;
+          }
+        });
+
+        stocks = (stocks + monthlyStocks) * (1 + stockGrowth / 12);
+        crypto = (crypto + monthlyCrypto) * (1 + cryptoGrowth / 12);
+        bank = (bank + monthlyBank + monthlyOther + portfolioCashflow) * (1 + bankGrowth / 12);
+      }
+
+      properties.forEach((property) => {
+        property.value *= (1 + propertyGrowth);
+      });
+
+      const propertyValue = properties.reduce((sum, property) => sum + property.value, 0);
+      const propertyDebt = properties.reduce((sum, property) => sum + property.loanBalance, 0);
+      const personalDebt = personalLoans.reduce((sum, loan) => sum + loan.amount, 0);
+      const netWorth = propertyValue + stocks + crypto + bank - propertyDebt - personalDebt;
+      const passiveMonthly =
+        properties
+          .filter((property) => !property.isPrimary)
+          .reduce((sum, property) => {
+            const ownCost = property.value * property.ownershipCostPct / 12;
+            const interest = property.loanBalance * property.annualRate / 12;
+            const interestDeduction = interest * CAPITAL_TAX;
+            const taxableProfit = Math.max(0, property.rent - property.expenses - ownCost);
+            const rentalTax = taxableProfit * CAPITAL_TAX;
+            const netRental = property.rent - property.expenses - ownCost - rentalTax;
+            return sum + netRental - property.monthlyPayment + interestDeduction;
+          }, 0) +
+        stocks * (stockGrowth * (1 - STOCK_TAX)) / 12 +
+        crypto * (cryptoGrowth * (1 - CAPITAL_TAX)) / 12 +
+        bank * (bankGrowth * (1 - CAPITAL_TAX)) / 12;
+
+      yearly.push({
+        year,
+        netWorth,
+        propertyEquity: propertyValue - propertyDebt,
+        liquid: bank,
+        investments: stocks + crypto,
+        debt: propertyDebt + personalDebt,
+        passiveMonthly,
+      });
+
+      if (target > 0 && hitYear === null && netWorth >= target) hitYear = year;
+    }
+
+    return { yearly, hitYear };
+  }
+
+  function freedomSettings(goal) {
+    const budgetFlows = budgetSavingsFlows();
+    return {
+      propertyGrowth: Number(goal?.pg || 4) / 100,
+      stockGrowth: Number(goal?.sg || 7) / 100,
+      cryptoGrowth: Number(goal?.cg || 10) / 100,
+      bankGrowth: Number(goal?.bg || 3) / 100,
+      monthlyStocks: Number(goal?.stkMon ?? budgetFlows.stocks ?? 0),
+      monthlyCrypto: Number(goal?.cryMon ?? budgetFlows.crypto ?? 0),
+      monthlyBank: Number(goal?.bnkMon ?? budgetFlows.bank ?? 0),
+      monthlyOther: Number(budgetFlows.bonds || 0) + Number(budgetFlows.other || 0),
+    };
+  }
+
+  function yearsToFreedom(goal, overrides = {}) {
+    if (!goal?.target) return null;
+    const settings = { ...freedomSettings(goal), ...overrides, target: Number(goal.target), years: 40 };
+    const projected = projectPortfolio(settings);
+    return projected.hitYear;
+  }
+
+  function patchedRenderEqAllocation() {
+    if (!window.D) return;
+    const element = document.getElementById("eq-allocation");
+    const badge = document.getElementById("eq-avail-badge");
+    if (!element || !badge) return;
+
+    const properties = (window.D.properties || []).map(buildPropertyState);
+    const cash = savingsBreakdown().bank;
+    const rows = [];
+    let totalFree = cash;
+
+    properties.forEach((property) => {
+      const equity = property.value - property.loanBalance;
+      const required = property.value * (1 - MORTGAGE_LTV);
+      const free = Math.max(0, equity - required);
+      totalFree += free;
+      rows.push({
+        name: property.name,
+        type: property.isPrimary ? "Bolig, 10% egenkapitalkrav" : "Utleie/sekundær, 10% egenkapitalkrav i forskriften",
+        equity,
+        required,
+        free,
+      });
+    });
+
+    badge.textContent = "kr " + money(totalFree) + " mulig EK";
+
+    if (!rows.length) {
+      element.innerHTML = '<div class="empty" style="padding:10px">Legg til eiendommer for å se EK-fordeling</div>';
+      return;
+    }
+
+    element.innerHTML =
+      rows.map((row) => {
+        const lockedPct = row.equity > 0 ? Math.min(100, (row.required / row.equity) * 100) : 0;
+        const freePct = row.equity > 0 ? Math.min(100, (row.free / row.equity) * 100) : 0;
+        return '<div style="margin-bottom:13px">' +
+          '<div style="display:flex;justify-content:space-between;margin-bottom:5px">' +
+          '<div><div style="font-size:13px;font-weight:600">' + esc(row.name) + '</div><div style="font-size:10px;color:#94a3b8">' + row.type + '</div></div>' +
+          '<div style="text-align:right"><div style="font-size:13px;font-weight:700;color:#16a34a">kr ' + money(row.free) + ' kan frigjøres</div><div style="font-size:10px;color:#94a3b8">kr ' + money(row.required) + ' må bli stående</div></div>' +
+          '</div><div class="eq-bar-bg"><div class="eq-bar-locked" style="width:' + lockedPct + '%"></div><div class="eq-bar-avail" style="width:' + freePct + '%"></div></div></div>';
+      }).join("") +
+      '<div class="divider"></div><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:12px;color:#64748b"><strong>Kontanter nå:</strong> kr ' + money(cash) + '<br><span style="font-size:11px">"Kan frigjøres" forutsetter refinansiering og ny kredittvurdering.</span></div><div style="font-size:16px;font-weight:900;color:#16a34a">kr ' + money(totalFree) + '</div></div>';
+  }
+
+  function patchedRenderAff() {
+    const element = document.getElementById("aff");
+    if (!element) return;
+
+    const totals = patchedTotals();
+    if (!totals.pv && !totals.tsav && !totals.ti) {
+      element.innerHTML = '<div class="empty" style="padding:10px">Legg inn data</div>';
+      return;
+    }
+
+    const grossIncomeAnnual = totals.ti * 12;
+    const maxDebt = grossIncomeAnnual * 5;
+    const remainingBorrow = Math.max(0, maxDebt - totals.td);
+    const immediateEquity = totals.cashNow;
+    const refinanceable = totals.refinanceableEquity;
+    const immediateMax = Math.min(immediateEquity / (1 - MORTGAGE_LTV), remainingBorrow + immediateEquity);
+    const refinanceMax = Math.min((immediateEquity + refinanceable) / (1 - MORTGAGE_LTV), remainingBorrow + immediateEquity + refinanceable);
+    const assumedRate = 0.055;
+    const stress = Math.max(STRESS_FLOOR, assumedRate + STRESS_ADD);
+    const immediateLoan = Math.max(0, immediateMax - immediateEquity);
+    const monthlyAtStress = typeof calcLoan === "function" ? calcLoan(immediateLoan, stress * 100, 25, "annuity").avg : 0;
+    const stressBuffer = totals.ti - totals.texp - monthlyAtStress;
+
+    element.innerHTML =
+      '<div style="background:#eff6ff;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:11px;color:#1e40af;line-height:1.6">' +
+      '<strong>Regelbasert estimat (Norge):</strong> Maks gjeld = 5× brutto årsinntekt, maks belåningsgrad 90%, rentestress = høyeste av 7% eller +3 prosentpoeng.<br>' +
+      '<strong>Viktig:</strong> Her brukes registrert brutto personinntekt. Dokumentert leieinntekt kan banker vurdere, men ikke som ren brutto husleie uten egen kredittvurdering.' +
+      '</div>' +
+      '<div class="metrics" style="margin-bottom:10px">' +
+      '<div class="metric"><div class="metric-lbl">Brutto årsinntekt</div><div class="metric-val neutral">kr ' + money(grossIncomeAnnual) + '</div></div>' +
+      '<div class="metric"><div class="metric-lbl">Gjenværende gjeldsrom</div><div class="metric-val neutral">kr ' + money(remainingBorrow) + '</div><div class="metric-sub">5× inntekt minus registrert gjeld</div></div>' +
+      '<div class="metric"><div class="metric-lbl">Kontanter nå</div><div class="metric-val good">kr ' + money(immediateEquity) + '</div><div class="metric-sub">Brukbare uten refinansiering</div></div>' +
+      '<div class="metric"><div class="metric-lbl">Mulig via refinansiering</div><div class="metric-val neutral">kr ' + money(refinanceable) + '</div><div class="metric-sub">Forutsetter ny bankgodkjenning</div></div>' +
+      '<div class="metric" style="border:2px solid #16a34a"><div class="metric-lbl">Kjøpspris nå</div><div class="metric-val good">kr ' + money(immediateMax) + '</div><div class="metric-sub">10% EK + gjeldstak</div></div>' +
+      '<div class="metric" style="border:2px solid #2563eb"><div class="metric-lbl">Kjøpspris med refinansiering</div><div class="metric-val neutral">kr ' + money(refinanceMax) + '</div><div class="metric-sub">Potensial, ikke kontanter du allerede har</div></div>' +
+      '</div>' +
+      '<div style="background:' + (stressBuffer >= 0 ? '#f0fdf4' : '#fef2f2') + ';border-radius:8px;padding:9px 12px;font-size:11px;color:' + (stressBuffer >= 0 ? '#166534' : '#dc2626') + ';margin-bottom:8px">' +
+      '<strong>Rentestress (' + pct(stress * 100, 1) + '%):</strong> Nytt lån på "kjøpspris nå" gir ca. kr ' + monthMoney(monthlyAtStress) + '/mnd. ' +
+      (stressBuffer >= 0
+        ? 'Etter registrerte utgifter står ca. kr ' + monthMoney(stressBuffer) + '/mnd igjen.'
+        : 'Med registrerte utgifter blir du ca. kr ' + monthMoney(Math.abs(stressBuffer)) + '/mnd i minus.') +
+      '</div>' +
+      '<span class="action-step" style="display:block;margin-top:0">"Kjøpspris nå" er det mest realistiske tallet. Tallet med refinansiering er bare et mulig maksimum hvis banken faktisk godkjenner uttak av EK.</span>';
+  }
+
+  function patchedRunSim() {
+    if (typeof requirePro === "function" && !requirePro("Avansert simulering")) return;
+
+    const totals = patchedTotals();
+    const years = Math.max(1, Math.min(30, parseN(document.getElementById("sim-yrs")?.value) || 10));
+    const target = parseN(document.getElementById("sim-tgt")?.value) || 0;
+    const mode = window._simMode || "realistic";
+    const realistic = mode === "realistic";
+    const propertyGrowth = (parseN(document.getElementById("sim-pg")?.value) || 4) / 100;
+    const stockGrowth = (parseN(document.getElementById("sim-sg")?.value) || 7) / 100;
+    const cryptoGrowth = (parseN(document.getElementById("sim-cg")?.value) || 10) / 100;
+    const bankGrowth = (parseN(document.getElementById("sim-bg")?.value) || 3) / 100;
+    const monthlyBank = parseN(document.getElementById("sim-bank")?.value) || 0;
+    const monthlyStocks = parseN(document.getElementById("sim-stk")?.value) || 0;
+    const monthlyCrypto = parseN(document.getElementById("sim-cry")?.value) || 0;
+    const purchaseEvery = parseInt(document.getElementById("sim-pfreq")?.value || "0", 10) || 0;
+    const buyValue = parseN(document.getElementById("sim-pval")?.value) || 0;
+    const buyRent = parseN(document.getElementById("sim-prent")?.value) || 0;
+    const buyExpenses = parseN(document.getElementById("sim-pexp")?.value) || 0;
+    const properties = (window.D?.properties || []).map(buildPropertyState);
+    const personalLoans = (window.D?.loans || []).map(buildPersonalLoanState);
+    const savings = savingsBreakdown();
+    let stocks = savings.stocks;
+    let crypto = savings.crypto;
+    let bank = savings.bank + savings.bonds + savings.other;
+    let blocked = [];
+    let completedPurchases = 0;
+    let hitYear = null;
+    const labels = [];
+    const nwSeries = [];
+    const debtSeries = [];
+    const bankSeries = [];
+    const investmentSeries = [];
+    const propertySeries = [];
+
+    const grossIncomeAnnual = totals.ti * 12;
+
+    for (let year = 1; year <= years; year += 1) {
+      if (purchaseEvery > 0 && buyValue > 0 && year % purchaseEvery === 0) {
+        const docCost = buyValue * SELLING_COST_RATE;
+        const downPayment = buyValue * (1 - MORTGAGE_LTV);
+        const cashNeeded = downPayment + docCost;
+        const newLoan = buyValue - downPayment;
+        const totalDebtNow =
+          properties.reduce((sum, property) => sum + property.loanBalance, 0) +
+          personalLoans.reduce((sum, loan) => sum + loan.amount, 0);
+        const totalDebtAfter = totalDebtNow + newLoan;
+        const debtOkay = totalDebtAfter <= grossIncomeAnnual * 5;
+        const cashOkay = bank >= cashNeeded;
+        const stressedPayment = typeof calcLoan === "function" ? calcLoan(newLoan, Math.max(STRESS_FLOOR, 0.055 + STRESS_ADD) * 100, 25, "annuity").avg : 0;
+        const bufferAfterStress = totals.ti - totals.texp - stressedPayment;
+        const stressOkay = bufferAfterStress >= 0;
+
+        if (!realistic || (cashOkay && debtOkay && stressOkay)) {
+          const newProperty = buildPropertyState({
+            id: Date.now() + year,
+            proptype: "rental",
+            value: buyValue,
+            purchase: buyValue,
+            loan: newLoan,
+            rate: 5.5,
+            years: 25,
+            rent: buyRent,
+            expenses: buyExpenses,
+            ownershipCost: 0,
+            name: "Simulert kjøp " + year,
+          });
+          bank -= cashNeeded;
+          properties.push(newProperty);
+          completedPurchases += 1;
+        } else {
+          const reasons = [];
+          if (!cashOkay) reasons.push("mangler kontanter til EK + kjøpskostnader");
+          if (!debtOkay) reasons.push("bryter 5× inntektsgrensen");
+          if (!stressOkay) reasons.push("negativ buffer etter rentestress");
+          blocked.push({ year, reason: reasons.join(", ") });
+        }
+      }
+
+      for (let month = 0; month < 12; month += 1) {
+        let portfolioCashflow = 0;
+
+        properties.forEach((property) => {
+          const ownCost = property.value * property.ownershipCostPct / 12;
+          const interest = property.loanBalance * property.annualRate / 12;
+          const interestDeduction = interest * CAPITAL_TAX;
+
+          if (property.isPrimary) {
+            portfolioCashflow -= property.hcost + ownCost + property.monthlyPayment - interestDeduction;
+          } else {
+            const taxableProfit = Math.max(0, property.rent - property.expenses - ownCost);
+            const rentalTax = taxableProfit * CAPITAL_TAX;
+            const netRental = property.rent - property.expenses - ownCost - rentalTax;
+            portfolioCashflow += netRental - property.monthlyPayment + interestDeduction;
+          }
+
+          if (property.loanBalance > 0 && property.monthlyPayment > 0) {
+            const monthlyInterest = property.loanBalance * (property.monthlyRate || property.annualRate / 12);
+            const principal = Math.max(0, Math.min(property.monthlyPayment - monthlyInterest, property.loanBalance));
+            property.loanBalance = Math.max(0, property.loanBalance - principal);
+          }
+        });
+
+        personalLoans.forEach((loan) => {
+          if (loan.amount > 0 && loan.monthlyPayment > 0) {
+            const monthlyInterest = loan.amount * (loan.monthlyRate || loan.annualRate / 12);
+            const principal = Math.max(0, Math.min(loan.monthlyPayment - monthlyInterest, loan.amount));
+            loan.amount = Math.max(0, loan.amount - principal);
+            portfolioCashflow -= loan.monthlyPayment;
+          }
+        });
+
+        stocks = (stocks + monthlyStocks) * (1 + stockGrowth / 12);
+        crypto = (crypto + monthlyCrypto) * (1 + cryptoGrowth / 12);
+        bank = (bank + monthlyBank + portfolioCashflow) * (1 + bankGrowth / 12);
+      }
+
+      properties.forEach((property) => {
+        property.value *= (1 + propertyGrowth);
+      });
+
+      const propertyValue = properties.reduce((sum, property) => sum + property.value, 0);
+      const propertyDebt = properties.reduce((sum, property) => sum + property.loanBalance, 0);
+      const personalDebt = personalLoans.reduce((sum, loan) => sum + loan.amount, 0);
+      const netWorth = propertyValue + stocks + crypto + bank - propertyDebt - personalDebt;
+      if (target > 0 && hitYear === null && netWorth >= target) hitYear = year;
+
+      labels.push("År " + year);
+      nwSeries.push(Math.round(netWorth));
+      debtSeries.push(Math.round(propertyDebt + personalDebt));
+      bankSeries.push(Math.round(bank));
+      investmentSeries.push(Math.round(stocks + crypto));
+      propertySeries.push(Math.round(propertyValue - propertyDebt));
+    }
+
+    const finalNetWorth = nwSeries[nwSeries.length - 1] || totals.nw;
+    const result = document.getElementById("sim-result");
+    if (!result) return;
+
+    const blockedHtml = blocked.length
+      ? '<div class="action bad" style="margin-bottom:10px"><div class="action-headline">Blokkerte kjøp</div><div class="action-body">' +
+        blocked.slice(0, 4).map((item) => "År " + item.year + ": " + item.reason).join("<br>") +
+        (blocked.length > 4 ? "<br>...og flere." : "") +
+        '</div></div>'
+      : "";
+
+    result.innerHTML =
+      '<div class="action purple" style="margin-bottom:12px"><div class="action-headline">Samlet prognose (' + (realistic ? "realistisk" : "optimistisk") + ')</div><div class="action-body">' +
+      'Netto formue etter ' + years + ' år: <strong>kr ' + money(finalNetWorth) + '</strong>.' +
+      (target ? (hitYear ? ' Målet nås i <strong>år ' + hitYear + "</strong>." : " Målet nås ikke innen valgt horisont.") : "") +
+      "<br>Utførte kjøp: " + completedPurchases + ". Banksaldo i simuleringen kan gå ned hvis porteføljen din bruker mer kontanter enn månedlig sparing tilfører." +
+      "</div></div>" +
+      blockedHtml +
+      '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-bottom:12px"><div style="height:240px"><canvas id="simC"></canvas></div></div>' +
+      '<div class="metrics">' +
+      '<div class="metric"><div class="metric-lbl">Eiendom EK</div><div class="metric-val good">kr ' + money(propertySeries[propertySeries.length - 1] || 0) + '</div></div>' +
+      '<div class="metric"><div class="metric-lbl">Aksjer/krypto</div><div class="metric-val neutral">kr ' + money(investmentSeries[investmentSeries.length - 1] || 0) + '</div></div>' +
+      '<div class="metric"><div class="metric-lbl">Bank</div><div class="metric-val neutral">kr ' + money(bankSeries[bankSeries.length - 1] || 0) + '</div></div>' +
+      '<div class="metric"><div class="metric-lbl">Samlet gjeld</div><div class="metric-val bad">kr ' + money(debtSeries[debtSeries.length - 1] || 0) + '</div></div>' +
+      '</div>';
+
+    setTimeout(() => {
+      const ctx = document.getElementById("simC");
+      if (!ctx || typeof Chart === "undefined") return;
+      if (window.C?.sim) window.C.sim.destroy();
+      window.C = window.C || {};
+      window.C.sim = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            { label: "Netto formue", data: nwSeries, borderColor: "#16a34a", backgroundColor: "rgba(22,163,74,.1)", fill: true, tension: 0.35, pointRadius: 2, borderWidth: 2 },
+            { label: "Eiendom EK", data: propertySeries, borderColor: "#d97706", fill: false, tension: 0.35, pointRadius: 2, borderWidth: 2 },
+            { label: "Investeringer", data: investmentSeries, borderColor: "#2563eb", fill: false, tension: 0.35, pointRadius: 2, borderWidth: 2 },
+            { label: "Bank", data: bankSeries, borderColor: "#0891b2", fill: false, tension: 0.35, pointRadius: 2, borderWidth: 2, borderDash: [4, 2] },
+            { label: "Gjeld", data: debtSeries, borderColor: "#dc2626", fill: false, tension: 0.35, pointRadius: 2, borderWidth: 2 },
+            ...(target ? [{ label: "Mål", data: Array(labels.length).fill(target), borderColor: "#7c3aed", borderDash: [6, 3], fill: false, pointRadius: 0, borderWidth: 2 }] : []),
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: "top", labels: { boxWidth: 10 } } },
+          scales: {
+            y: { ticks: { callback: (value) => "kr " + money(value) }, grid: { color: "#f1f5f9" } },
+            x: { grid: { display: false } },
+          },
+        },
+      });
+    }, 50);
+  }
+
+  function patchedRenderFreedomGoal(goal) {
+    const projected = projectPortfolio({ ...freedomSettings(goal), target: Number(goal.target || 0), years: 30 });
+    const totals = patchedTotals();
+    const hitYear = projected.hitYear;
+    const finalRow = projected.yearly[projected.yearly.length - 1];
+    const savings = savingsBreakdown();
+    const passiveNow =
+      totals.rentalCf +
+      savings.stocks * defaultReturnForType("stocks") * (1 - STOCK_TAX) / 12 +
+      savings.crypto * defaultReturnForType("crypto") * (1 - CAPITAL_TAX) / 12 +
+      (savings.bank + savings.bonds + savings.other) * defaultReturnForType("bank") * (1 - CAPITAL_TAX) / 12;
+    const targetMonthly = goal.target ? Number(goal.target) * 0.04 / 12 : 0;
+    const gap = Math.max(0, targetMonthly - passiveNow);
+    const progress = goal.target ? Math.min(100, Math.round((totals.nw / goal.target) * 100)) : 0;
+
+    return '<div class="freedom-card" id="fc-' + goal.id + '">' +
+      '<div class="freedom-header"><div style="font-size:11px;opacity:.7;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">🏝️ Finansielt fri</div>' +
+      '<div style="font-size:24px;font-weight:900;line-height:1">' + esc(goal.name) + '</div>' +
+      '<div style="font-size:12px;opacity:.75;margin-top:4px">Mål: kr ' + money(goal.target) + ' — ' + (hitYear ? ("nås i år " + hitYear) : "ikke nådd innen 30 år") + '</div>' +
+      '<div style="margin-top:14px"><div style="display:flex;justify-content:space-between;font-size:11px;opacity:.7;margin-bottom:5px"><span>Fremgang</span><span>' + progress + '%</span></div><div style="height:8px;background:rgba(255,255,255,.25);border-radius:10px;overflow:hidden"><div style="height:100%;background:rgba(255,255,255,.8);border-radius:10px;width:' + progress + '%"></div></div></div></div>' +
+      '<div class="freedom-body">' +
+      '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:14px;margin-bottom:14px">' +
+      '<div style="font-size:11px;color:#16a34a;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Konsistent frihetsberegning</div>' +
+      '<div class="metrics" style="margin:0">' +
+      '<div class="metric"><div class="metric-lbl">Netto formue nå</div><div class="metric-val good">kr ' + money(totals.nw) + '</div></div>' +
+      '<div class="metric"><div class="metric-lbl">Passiv netto nå</div><div class="metric-val neutral">kr ' + monthMoney(passiveNow) + '/mnd</div></div>' +
+      '<div class="metric"><div class="metric-lbl">4%-mål</div><div class="metric-val neutral">kr ' + monthMoney(targetMonthly) + '/mnd</div></div>' +
+      '<div class="metric"><div class="metric-lbl">Mangler</div><div class="metric-val ' + (gap > 0 ? 'bad' : 'good') + '">kr ' + monthMoney(gap) + '/mnd</div></div>' +
+      '</div></div>' +
+      '<div style="height:220px;margin:14px 0"><canvas id="freeC-' + goal.id + '"></canvas></div>' +
+      '<div class="action info" style="margin-bottom:12px"><div class="action-headline">Felles beregningsmotor</div><div class="action-body">' +
+      'Oversikt, målkort og AI bruker nå samme månedlige fremskriving. Det er derfor samme portefølje, samme sparing og samme mål som gir samme årstall overalt.' +
+      (finalRow ? '<br>Siste simulerte år: kr ' + money(finalRow.netWorth) + ' i netto formue.' : '') +
+      '</div></div>' +
+      '<button class="btn-del" onclick="delGoal(' + goal.id + ')" style="color:#ef4444;font-size:12px;margin-top:12px">× Slett mål</button>' +
+      '</div></div>';
+  }
+
+  function patchedDrawFreedomChart(goal) {
+    const projected = projectPortfolio({ ...freedomSettings(goal), target: Number(goal.target || 0), years: 30 });
+    const canvasId = "freeC-" + goal.id;
+    const ctx = document.getElementById(canvasId);
+    if (!ctx || typeof Chart === "undefined") return;
+
+    const labels = ["Nå"].concat(projected.yearly.map((row) => "År " + row.year));
+    const totals = patchedTotals();
+    const startSavings = savingsBreakdown();
+    const netStart = totals.nw;
+    const propertyStart = totals.pv - totals.pd;
+    const invStart = startSavings.stocks + startSavings.crypto;
+    const bankStart = startSavings.bank + startSavings.bonds + startSavings.other;
+
+    const totalSeries = [Math.round(netStart)].concat(projected.yearly.map((row) => Math.round(row.netWorth)));
+    const propertySeries = [Math.round(propertyStart)].concat(projected.yearly.map((row) => Math.round(row.propertyEquity)));
+    const invSeries = [Math.round(invStart)].concat(projected.yearly.map((row) => Math.round(row.investments)));
+    const bankSeries = [Math.round(bankStart)].concat(projected.yearly.map((row) => Math.round(row.liquid)));
+
+    window.C = window.C || {};
+    if (window.C[canvasId]) window.C[canvasId].destroy();
+
+    window.C[canvasId] = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          { label: "Eiendom EK", data: propertySeries, borderColor: "#16a34a", backgroundColor: "rgba(22,163,74,.08)", fill: true, tension: 0.35, pointRadius: 2, borderWidth: 2 },
+          { label: "Aksjer/krypto", data: invSeries, borderColor: "#2563eb", backgroundColor: "rgba(37,99,235,.05)", fill: true, tension: 0.35, pointRadius: 2, borderWidth: 2 },
+          { label: "Bank", data: bankSeries, borderColor: "#0891b2", backgroundColor: "rgba(8,145,178,.05)", fill: true, tension: 0.35, pointRadius: 2, borderWidth: 2 },
+          { label: "Total", data: totalSeries, borderColor: "#d97706", fill: false, tension: 0.35, pointRadius: 3, borderWidth: 3, borderDash: [5, 3] },
+          ...(goal.target ? [{ label: "Mål", data: Array(labels.length).fill(Number(goal.target)), borderColor: "#dc2626", borderDash: [8, 4], fill: false, pointRadius: 0, borderWidth: 2 }] : []),
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: "bottom", labels: { boxWidth: 10, padding: 8, font: { size: 10 } } } },
+        scales: {
+          y: { ticks: { callback: (value) => "kr " + money(value) }, grid: { color: "#f1f5f9" } },
+          x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } },
+        },
+      },
+    });
+  }
+
+  function patchedUpdateInsightHero() {
+    const totals = patchedTotals();
+    const headline = document.getElementById("insight-main");
+    const rows = document.getElementById("insight-rows");
+    if (!headline || !rows) return;
+
+    if (!window.D?.properties?.length && !window.D?.savings?.length && !totals.ti) {
+      headline.textContent = "Legg inn inntekt, sparing eller eiendom for din personlige analyse";
+      rows.innerHTML = "";
+      return;
+    }
+
+    const items = [];
+    const freedomGoal = (window.D?.goals || []).find((goal) => goal.type === "freedom" && Number(goal.target || 0) > 0);
+    if (freedomGoal) {
+      const year = yearsToFreedom(freedomGoal);
+      if (year) {
+        headline.innerHTML = 'Du kan nå frihetsmålet ditt om <strong style="color:#4ade80">' + year + " år</strong>";
+        items.push({ icon: "🏝️", text: "Samme beregning brukes nå i alle frihetsvisninger." });
+      } else {
+        headline.innerHTML = 'Netto formue: <strong style="color:#4ade80">kr ' + money(totals.nw) + "</strong>";
+        items.push({ icon: "🏝️", text: "Frihetsmålet nås ikke innen 30 år med dagens oppsett." });
+      }
+    } else {
+      headline.innerHTML = 'Netto formue: <strong style="color:#4ade80">kr ' + money(totals.nw) + "</strong>";
+    }
+
+    items.push({ icon: "💰", text: "Netto utleiecashflow: <strong>kr " + monthMoney(totals.rentalCf) + "/mnd</strong>" });
+    items.push({ icon: "🏦", text: "Kontanter nå: <strong>kr " + money(totals.cashNow) + "</strong>" });
+    items.push({ icon: "🏘️", text: "Mulig refinansierbar EK: <strong>kr " + money(totals.refinanceableEquity) + "</strong>" });
+
+    rows.innerHTML = items.slice(0, 4).map((item) =>
+      '<div class="insight-row"><div class="insight-icon">' + item.icon + '</div><div class="insight-txt">' + item.text + "</div></div>"
+    ).join("");
+  }
+
+  function patchedUpdateActionPlan() {
+    const element = document.getElementById("action-plan");
+    if (!element) return;
+    const totals = patchedTotals();
+    const actions = [];
+    const freedomGoal = (window.D?.goals || []).find((goal) => goal.type === "freedom" && Number(goal.target || 0) > 0);
+
+    if (totals.ti > 0 && totals.sr < 20) {
+      actions.push({
+        title: "Øk sparegraden",
+        desc: "Nåværende sparegrad er " + pct(totals.sr, 1) + "%.",
+        value: "Du trenger ca. kr " + monthMoney(totals.ti * 0.2 - totals.tbs) + "/mnd for å nå 20%.",
+      });
+    }
+
+    if (totals.refinanceableEquity > 0) {
+      actions.push({
+        title: "Skill mellom kontanter og refinansierbar EK",
+        desc: "Appen viser nå disse separat for å unngå for høy kjøpekraft.",
+        value: "Kontanter nå: kr " + money(totals.cashNow) + ". Potensiell EK via refinansiering: kr " + money(totals.refinanceableEquity) + ".",
+      });
+    }
+
+    if (freedomGoal) {
+      const year = yearsToFreedom(freedomGoal);
+      actions.push({
+        title: "Frihetsestimat",
+        desc: year ? ("Målet nås i omtrent år " + year + ".") : "Målet nås ikke innen 30 år med dagens sparing.",
+        value: "Dette er nå samme tallet som brukes i oversikt og målkort.",
+      });
+    }
+
+    if (totals.rentalCf < 0) {
+      actions.push({
+        title: "Bankkontoen kan falle i simuleringen",
+        desc: "Det er ikke en bug hvis porteføljen bruker mer kontanter enn du setter inn hver måned.",
+        value: "Negativ utleiecashflow på kr " + monthMoney(Math.abs(totals.rentalCf)) + "/mnd må dekkes et sted.",
+      });
+    }
+
+    if (!actions.length) {
+      actions.push({
+        title: "Porteføljen ser ryddig ut",
+        desc: "Det finnes ingen åpenbare matematiske røde flagg med dagens registrerte tall.",
+        value: "",
+      });
+    }
+
+    element.innerHTML = actions.slice(0, 5).map((action, index) =>
+      '<div class="action-plan-item"><div class="action-plan-num">' + (index + 1) + '</div><div class="action-plan-content"><div class="action-plan-title">' +
+      action.title + '</div><div class="action-plan-desc">' + action.desc + '</div>' +
+      (action.value ? '<div class="action-plan-value">' + action.value + "</div>" : "") +
+      "</div></div>"
+    ).join("");
+  }
+
+  function patchedUpdateAIDecisions() {
+    const element = document.getElementById("ai-decisions");
+    if (!element) return;
+    const totals = patchedTotals();
+    const decisions = [];
+    const freedomGoal = (window.D?.goals || []).find((goal) => goal.type === "freedom" && Number(goal.target || 0) > 0);
+
+    if (freedomGoal) {
+      const year = yearsToFreedom(freedomGoal);
+      decisions.push({
+        type: "",
+        title: "Frihetsmålet er synkronisert",
+        body: year
+          ? "Oversikt, mål og AI bruker nå samme fremskriving og peker på omtrent år " + year + "."
+          : "Oversikt, mål og AI bruker nå samme fremskriving og er enige om at målet ikke nås innen 30 år.",
+      });
+    }
+
+    if (totals.cashNow < totals.totalAvailable) {
+      decisions.push({
+        type: "warn",
+        title: "Kjøpekraft deles i to",
+        body: "Kontanter nå er kr " + money(totals.cashNow) + ", mens resten av egenkapitalen krever refinansiering. Dette hindrer at appen viser urealistisk høy kjøpspris.",
+      });
+    }
+
+    if (totals.rentalCf < 0) {
+      decisions.push({
+        type: "alert",
+        title: "Utleieporteføljen trekker bankkontoen ned",
+        body: "Negativ netto cashflow på kr " + monthMoney(Math.abs(totals.rentalCf)) + "/mnd vil også trekke ned banksaldo i simuleringene til du kompenserer med høyere sparing eller bedre leieøkonomi.",
+      });
+    }
+
+    if (!decisions.length) {
+      decisions.push({
+        type: "",
+        title: "Ingen store avvik",
+        body: "De viktigste beregningene er nå konsistente på tvers av oversikt, mål og simulering.",
+      });
+    }
+
+    element.innerHTML = decisions.map((decision) =>
+      '<div class="ai-decision' + (decision.type ? " " + decision.type : "") + '"><div class="ai-decision-title">' + decision.title +
+      '</div><div class="ai-decision-body">' + decision.body + "</div></div>"
+    ).join("");
+  }
+
+  function patchedUpdateAll() {
+    const totals = patchedTotals();
+    const afterTaxInvestmentGrowth = totals.savingsAfterTaxAnnualReturn;
+    const propertyPrincipalAnnual = totals.rentals.reduce((sum, property) => sum + (typeof propM === "function" ? propM(property).principalRepaidAnn : 0), 0);
+    const propertyGrowthAnnual = totals.pv * 0.04;
+    const savingsAnnual = totals.tbs * 12;
+    const annualGrowth = totals.rentalCf * 12 + propertyPrincipalAnnual + propertyGrowthAnnual + afterTaxInvestmentGrowth + savingsAnnual;
+    const annualGrowthPct = totals.nw > 0 ? (annualGrowth / totals.nw) * 100 : 0;
+
+    const map = [
+      ["h-nw", "kr " + money(totals.nw)],
+      ["h-sub", "Aktiva kr " + money(totals.pv + totals.tsav) + " — Gjeld kr " + money(totals.td)],
+      ["h-cf", (totals.rentalCf >= 0 ? "+ " : "- ") + "kr " + monthMoney(Math.abs(totals.rentalCf))],
+      ["h-cf-sub", "reell utleiecashflow etter skatt, lån og rentefradrag"],
+      ["h-nwgrow", (annualGrowthPct >= 0 ? "+" : "") + pct(annualGrowthPct, 1) + "%"],
+      ["h-nwgrow-sub", "kr " + money(annualGrowth)],
+      ["h-inc", "kr " + monthMoney(totals.ti)],
+      ["h-sr", pct(Math.max(0, totals.sr), 1) + "%"],
+      ["nw-pv", "kr " + money(totals.pv)],
+      ["nw-psub", (window.D?.properties || []).length + " eiendom(mer)"],
+      ["nw-stk", "kr " + money(totals.stk)],
+      ["nw-cry", "kr " + money(totals.cry)],
+      ["nw-bnk", "kr " + money(totals.bnk)],
+      ["nw-mort", "− kr " + money(totals.pd)],
+      ["nw-msub", totals.rentals.length + totals.primary.length + " boliglån"],
+      ["nw-loans", "− kr " + money(totals.pl)],
+      ["nw-tot", "kr " + money(totals.nw)],
+      ["s-eq", "kr " + money(totals.peR)],
+      ["s-inv", "kr " + money(totals.stk + totals.cry)],
+      ["s-yield", pct(totals.ay, 2) + "%"],
+      ["s-debt", "kr " + money(totals.td)],
+    ];
+
+    map.forEach(([id, text]) => {
+      const node = document.getElementById(id);
+      if (node) node.textContent = text;
+    });
+
+    const growthDrivers = document.getElementById("growth-drivers");
+    if (growthDrivers) {
+      const drivers = [
+        { label: "💰 Sparing", value: savingsAnnual },
+        { label: "🏘️ Prisvekst", value: propertyGrowthAnnual },
+        { label: "🔑 Avdrag", value: propertyPrincipalAnnual },
+        { label: "📈 Inv.avkastning etter skatt", value: afterTaxInvestmentGrowth },
+        { label: "🏠 Utleie CF", value: totals.rentalCf * 12 },
+      ];
+      const total = drivers.reduce((sum, item) => sum + item.value, 0) || 1;
+      growthDrivers.innerHTML = drivers.map((driver) => {
+        const share = Math.max(0, Math.round((Math.abs(driver.value) / Math.abs(total)) * 100));
+        return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="flex-shrink:0;width:140px">' + driver.label +
+          '</span><div style="flex:1;height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden"><div style="height:100%;width:' + share +
+          '%;background:' + (driver.value >= 0 ? "#16a34a" : "#dc2626") + ';border-radius:4px"></div></div><span style="flex-shrink:0;width:100px;text-align:right;font-weight:700;color:' +
+          (driver.value >= 0 ? "#16a34a" : "#dc2626") + '">kr ' + money(driver.value) + "</span></div>";
+      }).join("");
+    }
+
+    if (typeof calcAfterTaxNW === "function") {
+      const afterTax = calcAfterTaxNW();
+      const pairs = [
+        ["nw-accounting", "kr " + money(afterTax.accountingNW)],
+        ["nw-market", "kr " + money(afterTax.marketNW)],
+        ["nw-aftertax", "kr " + money(afterTax.afterTaxNW)],
+        ["nw-at-proptax", "− kr " + money(afterTax.propTaxes)],
+        ["nw-at-propcost", "− kr " + money(afterTax.propCosts)],
+        ["nw-at-invtax", "− kr " + money(afterTax.invTax)],
+        ["nw-at-net", "kr " + money(afterTax.afterTaxNW)],
+      ];
+      pairs.forEach(([id, text]) => {
+        const node = document.getElementById(id);
+        if (node) node.textContent = text;
+      });
+    }
+
+    if (typeof genNextStep === "function") genNextStep(totals);
+    if (typeof genInsights === "function") genInsights(totals);
+    patchedRenderAff();
+    patchedRenderEqAllocation();
+    if (typeof refreshCharts === "function") refreshCharts();
+    patchedUpdateInsightHero();
+    patchedUpdateActionPlan();
+    patchedUpdateAIDecisions();
+    if (typeof updateLevel === "function") updateLevel(totals);
+    if (window._userId && window.cloudSave) cloudSave();
+  }
+
+  function patchCloudPromptAndProfile() {
+    window.confirm = (message) => {
+      const msg = String(message || "");
+      if (msg.startsWith("Skylagrede data funnet.")) {
+        const profile = JSON.parse(localStorage.getItem("wOS_profile") || "{}");
+        const key = "wOS_cloud_prompt_seen_" + (profile.user_id || "anon");
+        if (localStorage.getItem(key) === "1") {
+          return false;
+        }
+        const result = originalConfirm(message);
+        if (result) localStorage.setItem(key, "1");
+        return result;
+      }
+      return originalConfirm(message);
+    };
+
+    const patchProfileDom = () => {
+      const rows = Array.from(document.querySelectorAll("#profile-area > div:nth-of-type(2) > div"));
+      const lastRow = rows[rows.length - 1];
+      if (!lastRow) return;
+      const labels = lastRow.querySelectorAll("span");
+      if (labels.length >= 2) {
+        labels[0].textContent = "Skystatus";
+        labels[1].textContent = "Pålogget";
+      }
+    };
+
+    patchProfileDom();
+
+    const originalShowProfile = window.showProfile;
+    if (typeof originalShowProfile === "function") {
+      window.showProfile = function patchedShowProfile(profile) {
+        originalShowProfile(profile);
+        patchProfileDom();
+      };
+    }
+  }
+
+  function patchTextualTaxExplanation() {
+    if (typeof generateLocalResponse !== "function") return;
+    const original = generateLocalResponse;
+    window.generateLocalResponse = function patchedGenerateLocalResponse(message) {
+      const lower = String(message || "").toLowerCase();
+      if (lower.includes("skatt") || lower.includes("fradrag")) {
+        const totals = patchedTotals();
+        return "💼 Skatteinfo (Norge):\n\n" +
+          "• Utleie skattlegges normalt med 22% av overskudd, ikke av brutto leie.\n" +
+          "• Gjeldsrenter gir 22% rentefradrag på skatten.\n" +
+          "• Aksjer/fond med aksjeandel bruker 37,84% effektiv skatt i 2026.\n" +
+          "• Kryptogevinst og bankrenter skattlegges som kapitalinntekt med 22%.\n" +
+          "• Egen bolig kan selges skattefritt når eier- og botidsvilkårene er oppfylt.\n\n" +
+          "Registrert rentefradrag hos deg: kr " + monthMoney(totals.intTaxRed * 12) + "/år.";
+      }
+      return original(message);
+    };
+  }
+
+  function applyPatches() {
+    window.tots = patchedTotals;
+    window.renderAff = patchedRenderAff;
+    window.renderEqAllocation = patchedRenderEqAllocation;
+    window.runSim = patchedRunSim;
+    window.renderFreedomGoal = patchedRenderFreedomGoal;
+    window.drawFreedomChart = patchedDrawFreedomChart;
+    window.updateInsightHero = patchedUpdateInsightHero;
+    window.updateActionPlan = patchedUpdateActionPlan;
+    window.updateAIDecisions = patchedUpdateAIDecisions;
+    window.updateAll = patchedUpdateAll;
+    patchCloudPromptAndProfile();
+    patchTextualTaxExplanation();
+
+    setTimeout(() => {
+      if (typeof renderGoals === "function") renderGoals();
+      if (typeof updateAll === "function") updateAll();
+    }, 0);
+  }
+
+  applyPatches();
+})();
+</script>
 </body>
 </html>
