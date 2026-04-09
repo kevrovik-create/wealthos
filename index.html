@@ -368,7 +368,7 @@ body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFo
   <div style="height:13px"></div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:13px">
     <div style="font-size:18px;font-weight:800">🏘️ Mine eiendommer</div>
-    <button class="btn-green btn-sm" onclick="toggleForm('prop-form')">+ Legg til</button>
+    <button class="btn-green btn-sm" onclick="if(!checkPropertyLimit())return;toggleForm('prop-form')">+ Legg til</button>
   </div>
   <div class="form-box" id="prop-form">
     <div class="form-section">Grunninfo</div>
@@ -858,19 +858,38 @@ function sfmt(id,v){const e=document.getElementById(id);if(e)e.value=v?fmt(v):''
 
 // ── LOAN MATH ──
 function calcLoan(P,r,y,type){
-if(!P||!y)return{avg:0,first:0,last:0,totalInt:0,principalPerYear:0};
+if(!P||!y)return{avg:0,first:0,last:0,totalInt:0,principalPerYear:0,type:type||'annuity'};
 const mr=r/100/12,n=y*12;
 if(type==='serial'){
 const prin=P/n,first=prin+P*mr,last=prin+prin*mr;
 const totalInt=P*mr*(n+1)/2;
-return{avg:prin+P*mr*(n+1)/(2*n),first,last,totalInt,principalPerYear:P/y,type:'serial'};
+return{avg:prin+P*mr*(n+1)/(2*n),first,last,totalInt,principalPerYear:P/y,type:'serial',mr,n,P};
 }
-if(!r)return{avg:P/n,first:P/n,last:P/n,totalInt:0,principalPerYear:P/y};
+if(!r)return{avg:P/n,first:P/n,last:P/n,totalInt:0,principalPerYear:P/y,type:'annuity',mr:0,n,P};
 const m=P*(mr*Math.pow(1+mr,n))/(Math.pow(1+mr,n)-1);
-// First year principal repaid for annuity
-const intFirstYear=P*r/100; // approximate
+const intFirstYear=P*r/100;
 const principalPerYear=m*12-intFirstYear;
-return{avg:m,first:m,last:m,totalInt:m*n-P,principalPerYear,type:'annuity'};
+return{avg:m,first:m,last:m,totalInt:m*n-P,principalPerYear,type:'annuity',mr,n,P,m};
+}
+// Calculate current annual principal paydown for annuity loan at a given year
+function annuityPrincipalAtYear(P,mr,m,yearsSinceStart){
+if(!P||!mr||!m)return 0;
+// Remaining balance after k months: B(k) = P*(1+mr)^k - m*((1+mr)^k - 1)/mr
+const k = Math.max(0, yearsSinceStart) * 12;
+const factor = Math.pow(1+mr, k);
+const balance = P * factor - m * (factor - 1) / mr;
+const bal = Math.max(0, balance);
+// Principal paid in the next 12 months from this point
+let prinYear = 0;
+let b = bal;
+for(let i=0;i<12;i++){
+  const intPart = b * mr;
+  const prinPart = m - intPart;
+  if(prinPart <= 0 || b <= 0) break;
+  prinYear += Math.min(prinPart, b);
+  b -= prinPart;
+}
+return prinYear;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -886,50 +905,68 @@ function propM(p){
 const isR=p.proptype!=='primary';
 const loan=calcLoan(p.loan,p.rate,p.years,p.ltype||'annuity');
 const mMort=loan.avg; // full monthly payment (interest + principal)
-const intMonth=(p.loan||0)*(p.rate||0)/100/12; // monthly interest portion
-const principalMonth=mMort-intMonth; // monthly principal portion
+
+// ── PURCHASE YEAR & HOLDING PERIOD ──
+const purchaseYear=p.purchaseYear||new Date().getFullYear();
+const holdingYears=Math.max(0, new Date().getFullYear()-purchaseYear);
+
+// ── DYNAMIC PRINCIPAL — based on current stage of the loan ──
+let principalRepaidAnn=0;
+let intMonth=0;
+let principalMonth=0;
+if(loan.type==='annuity' && loan.mr && loan.m){
+  principalRepaidAnn = annuityPrincipalAtYear(p.loan, loan.mr, loan.m, holdingYears);
+  // Current month's interest (at this point in the amortization)
+  const k = holdingYears * 12;
+  const factor = Math.pow(1+loan.mr, k);
+  const currentBalance = Math.max(0, (p.loan||0) * factor - loan.m * (factor - 1) / loan.mr);
+  intMonth = currentBalance * loan.mr;
+  principalMonth = loan.m - intMonth;
+} else {
+  intMonth = (p.loan||0)*(p.rate||0)/100/12;
+  principalMonth = mMort - intMonth;
+  principalRepaidAnn = principalMonth * 12;
+}
 
 // ── OWNERSHIP COST — maintenance, insurance, fees ──
 const val=p.value||p.purchase||0;
 const ownCostPct=(p.ownershipCost||0)/100;
-const ownCostMonth=val*ownCostPct/12; // monthly ownership cost
+const ownCostMonth=val*ownCostPct/12;
 
-// ── PURCHASE YEAR & HOLDING PERIOD ──
-const purchaseYear=p.purchaseYear||new Date().getFullYear();
-const holdingYears=Math.max(1, new Date().getFullYear()-purchaseYear);
-
-// ── RENTAL TAX — 22% of (rent − expenses − ownership cost). Interest NOT deducted from rental. ──
+// ── RENTAL TAX — 22% of (rent − expenses − ownership cost). Interest NOT deducted. ──
 const taxableR=isR?Math.max(0,(p.rent||0)-(p.expenses||0)-ownCostMonth):0;
-const rTax=taxableR*TR; // 22% rental tax per month
+const rTax=taxableR*TR;
 
 // ── NET CASHFLOW = rent − expenses − ownership cost − tax ──
 const netRentalCF=isR?(p.rent||0)-(p.expenses||0)-ownCostMonth-rTax:0;
 
-// ── INTEREST DEDUCTION — separate personal income tax benefit ──
-const interestDeduction=intMonth*TR; // 22% of interest — monthly personal tax saving
+// ── INTEREST DEDUCTION — 22% tax shield on interest (personal tax benefit) ──
+const interestDeduction=intMonth*TR;
 
-// ── TOTAL MONTHLY PICTURE (for display) ──
-const cfPre=isR?netRentalCF-mMort:-(p.hcost||0)-ownCostMonth-mMort; // before interest deduction
-const cfPost=isR?cfPre+interestDeduction:cfPre; // after personal interest deduction
+// ── TOTAL MONTHLY PICTURE ──
+const cfPre=isR?netRentalCF-mMort:-(p.hcost||0)-ownCostMonth-mMort;
+const cfPost=isR?cfPre+interestDeduction:cfPre;
 
 const eq=val-(p.loan||0);
 const grossY=isR&&val?((p.rent||0)*12/val)*100:0;
 const eqIn=p.equityIn||(val-(p.loan||0));
 
-// ── ROI — uses actual holding period for appreciation ──
-const netRentalProfitAnn=isR?netRentalCF*12:0; // already after 22% tax
-const principalRepaidAnn=principalMonth*12;
-const appreciation=val*DEFAULT_GROWTH; // 4% annual appreciation
-const roi=isR&&eqIn?((netRentalProfitAnn+principalRepaidAnn+appreciation)/eqIn)*100:0;
+// ── ROI (Return on Investment) = net income / total investment ──
+const netRentalProfitAnn=isR?netRentalCF*12:0;
+const appreciation=val*DEFAULT_GROWTH;
+// ROI: (net rental + principal paydown + appreciation) / equity invested
+const roi=isR&&eqIn>0?((netRentalProfitAnn+principalRepaidAnn+appreciation)/eqIn)*100:0;
+// ROE: (net rental + principal paydown + appreciation) / current equity
+const roe=isR&&eq>0?((netRentalProfitAnn+principalRepaidAnn+appreciation)/eq)*100:0;
 // Total return since purchase
 const totalAppreciation=val-(p.purchase||val);
-const totalReturn=eqIn?((totalAppreciation+netRentalProfitAnn*holdingYears)/eqIn)*100:0;
+const totalReturn=eqIn>0?((totalAppreciation+netRentalProfitAnn*holdingYears)/eqIn)*100:0;
 
 const ltv=val?((p.loan||0)/val)*100:0;
 const pSqm=p.sqm?Math.round(val/p.sqm):0,rSqm=isR&&p.sqm?Math.round((p.rent||0)/p.sqm):0;
 const netAnnPost=isR?cfPost*12:0;
 const gainTax=(val-(p.purchase||0))*TR;
-return{loan,mMort,intMonth,principalMonth,cfPre,cfPost,rTax,taxableR,interestDeduction,netRentalCF,eq,grossY,roi,ltv,pSqm,rSqm,netAnnPost,val,gainTax,isR,netRentalProfitAnn,principalRepaidAnn,appreciation,ownCostMonth,holdingYears,totalReturn,purchaseYear};
+return{loan,mMort,intMonth,principalMonth,cfPre,cfPost,rTax,taxableR,interestDeduction,netRentalCF,eq,grossY,roi,roe,ltv,pSqm,rSqm,netAnnPost,val,gainTax,isR,netRentalProfitAnn,principalRepaidAnn,appreciation,ownCostMonth,holdingYears,totalReturn,purchaseYear};
 }
 
 // ── TOTALS ──
@@ -1169,15 +1206,46 @@ el.innerHTML=ins.slice(0,5).map(i=>`<div class="action ${i.c}"><div class="actio
 function renderAff(t){
 const el=document.getElementById('aff');
 if(!t.pv&&!t.tsav&&!t.ti){el.innerHTML='<div class="empty" style="padding:10px">Legg inn data</div>';return;}
-const maxLI=t.ti*12*5,avEq=t.totalAvailable,maxP=avEq>0?Math.min(maxLI+avEq,avEq/0.15):0;
-const mon=calcLoan(maxP*0.85,5.5,25,'annuity').avg;
-el.innerHTML=`<div class="metrics" style="margin-bottom:10px">
-<div class="metric"><div class="metric-lbl">Tilgjengelig EK</div><div class="metric-val neutral">kr ${fmtK(Math.round(avEq))}</div></div>
-<div class="metric"><div class="metric-lbl">Maks lån (5x inntekt)</div><div class="metric-val neutral">kr ${fmtK(Math.round(maxLI))}</div></div>
-<div class="metric"><div class="metric-lbl">Maks kjøpspris</div><div class="metric-val good">kr ${fmtK(Math.round(maxP))}</div></div>
-<div class="metric"><div class="metric-lbl">Forv. terminbeløp/mnd</div><div class="metric-val warn">kr ${fmt(Math.round(mon))}</div></div>
+// Norwegian bank rules:
+// Max total debt = 5x gross annual income (including net rental income)
+const grossAnnual = t.ti * 12;
+const netRentalAnn = t.rentals.reduce((s,p)=>s+(p.rent||0)-(p.expenses||0),0) * 12;
+const totalIncomeForBank = grossAnnual + Math.max(0, netRentalAnn);
+const maxTotalDebt = totalIncomeForBank * 5;
+const existingDebt = t.td; // total debt (mortgages + personal loans)
+const remainingBorrowCapacity = Math.max(0, maxTotalDebt - existingDebt);
+const avEq = t.totalAvailable;
+// Max purchase price limited by BOTH equity (15% for rental) and borrowing capacity
+const maxByEq = avEq > 0 ? avEq / 0.15 : 0; // rental: need 15% EK
+const maxByEqPrimary = avEq > 0 ? avEq / 0.10 : 0; // primary: need 10% EK
+const maxByDebt = remainingBorrowCapacity + avEq; // loan + own equity
+const maxPRental = Math.min(maxByEq, maxByDebt);
+const maxPPrimary = Math.min(maxByEqPrimary, maxByDebt);
+const newLoanRental = Math.max(0, maxPRental - avEq);
+const newLoanPrimary = Math.max(0, maxPPrimary - avEq);
+const monR = calcLoan(newLoanRental, 5.5, 25, 'annuity').avg;
+const monP = calcLoan(newLoanPrimary, 5.5, 25, 'annuity').avg;
+// Stress test: +3% rate
+const stressRate = 8.5;
+const stressMonR = calcLoan(newLoanRental, stressRate, 25, 'annuity').avg;
+const stressTotalMort = D.properties.reduce((s,p)=>s+calcLoan(p.loan||0,stressRate,p.years||25,'annuity').avg,0) + stressMonR;
+const stressPctIncome = t.ti > 0 ? (stressTotalMort / t.ti * 100) : 0;
+const limitingFactor = maxByEq < maxByDebt ? 'egenkapital' : 'gjeldsbegrensning (5× inntekt)';
+el.innerHTML=`<div style="background:#eff6ff;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:11px;color:#1e40af;line-height:1.6">
+<strong>Norske bankregler:</strong> Maks gjeld = 5× brutto årsinntekt. EK-krav: 15% utleie, 10% primær. Eksisterende gjeld trekkes fra.<br>
+<strong>Din totalinntekt for bank:</strong> kr ${fmtK(Math.round(totalIncomeForBank))}/år (lønn ${fmtK(grossAnnual)} + netto utleie ${fmtK(Math.max(0,netRentalAnn))})<br>
+<strong>Begrensende faktor:</strong> ${limitingFactor}
 </div>
-<span class="action-step" style="display:block;margin-top:0">${maxP>1000000?`Du kan kjøpe for opp til kr ${fmtK(Math.round(maxP))} basert på tilgjengelig EK over minimumskrav.`:'Bygg opp mer EK for å styrke kjøpekraften.'}</span>`;
+<div class="metrics" style="margin-bottom:10px">
+<div class="metric"><div class="metric-lbl">Tilgjengelig EK</div><div class="metric-val neutral">kr ${fmtK(Math.round(avEq))}</div></div>
+<div class="metric"><div class="metric-lbl">Gjenværende lånekapasitet</div><div class="metric-val neutral">kr ${fmtK(Math.round(remainingBorrowCapacity))}</div><div class="metric-sub">5× ${fmtK(Math.round(totalIncomeForBank))} − gjeld ${fmtK(existingDebt)}</div></div>
+<div class="metric" style="border:2px solid #16a34a"><div class="metric-lbl">Maks kjøpspris (utleie, 15% EK)</div><div class="metric-val good">kr ${fmtK(Math.round(maxPRental))}</div><div class="metric-sub">Lån ${fmtK(Math.round(newLoanRental))} — kr ${fmt(Math.round(monR))}/mnd</div></div>
+<div class="metric" style="border:2px solid #2563eb"><div class="metric-lbl">Maks kjøpspris (primær, 10% EK)</div><div class="metric-val neutral">kr ${fmtK(Math.round(maxPPrimary))}</div><div class="metric-sub">Lån ${fmtK(Math.round(newLoanPrimary))} — kr ${fmt(Math.round(monP))}/mnd</div></div>
+</div>
+<div style="background:${stressPctIncome>70?'#fef2f2':'#f0fdf4'};border-radius:8px;padding:9px 12px;font-size:11px;color:${stressPctIncome>70?'#dc2626':'#166534'};margin-bottom:8px">
+<strong>Stresstest (+3% rente = ${stressRate}%):</strong> Total terminbeløp kr ${fmt(Math.round(stressTotalMort))}/mnd = ${fmtD(stressPctIncome)}% av inntekt. ${stressPctIncome>70?'⚠️ Over bankens grense — vurder lavere kjøpspris.':'✅ Innenfor bankens krav.'}
+</div>
+<span class="action-step" style="display:block;margin-top:0">${maxPRental>1000000?`Du kan kjøpe utleiebolig for opp til kr ${fmtK(Math.round(maxPRental))} — begrenset av ${limitingFactor}.`:'Bygg opp mer EK eller øk inntekt for å styrke kjøpekraften.'}</span>`;
 }
 
 // ── PROPERTIES ──
@@ -1208,7 +1276,7 @@ return`<div class="prop-card primary-res"><div class="prop-hdr"><div style="flex
 }
 const cfC=m.cfPost>=0?'good':'bad',yC=m.grossY>=5?'good':m.grossY>=3?'warn':'bad';
 const sb=p.status==='Utleid'?'bdg-green':p.status==='Ledig'?'bdg-red':'bdg-gray';
-return`<div class="prop-card"><div class="prop-hdr"><div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800">${esc(p.name)}</div><div style="font-size:12px;color:#64748b">${esc(p.address||'')}${p.sqm?' — '+p.sqm+' kvm':''}${p.purchaseYear?' — kjøpt '+p.purchaseYear:''}</div>${p.loan?`<div style="font-size:11px;color:#64748b;margin-top:3px">${p.ltype==='serial'?'Serielån':'Annuitetslån'}: kr ${fmtK(p.loan)} — ${p.rate}% — kr ${fmt(Math.round(m.mMort))}/mnd</div>`:''}</div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0"><span class="badge ${sb}">${p.status}</span><button class="btn-del" onclick="delProp(${p.id})" style="color:#ef4444;font-size:12px">× slett</button></div></div><div class="prop-body"><div style="background:${m.cfPost>=0?'linear-gradient(135deg,#f0fdf4,#dcfce7)':'linear-gradient(135deg,#fef2f2,#fee2e2)'};border-radius:12px;padding:13px;margin-bottom:10px;border:1px solid ${m.cfPost>=0?'#16a34a':'#dc2626'}"><div style="font-size:10px;color:${m.cfPost>=0?'#16a34a':'#dc2626'};text-transform:uppercase;font-weight:700;letter-spacing:1px;margin-bottom:3px">⭐ Netto cashflow</div><div style="font-size:20px;font-weight:900;color:${m.cfPost>=0?'#16a34a':'#dc2626'}">kr ${fmt(Math.round(m.cfPost))}/mnd</div><div style="font-size:11px;color:#475569;margin-top:2px">= (leie − drift − skatt) − lån + rentefradrag</div></div><div class="metrics"><div class="metric"><div class="metric-lbl">Brutto yield</div><div class="metric-val ${yC}">${fmtD(m.grossY)}%</div><div class="metric-sub">${m.grossY>=5?'Over markedsnorm':'Under markedsnorm'}</div></div><div class="metric"><div class="metric-lbl">Total ROI etter skatt</div><div class="metric-val ${m.roi>=8?'good':m.roi>=4?'warn':'bad'}">${fmtD(m.roi)}%</div><div class="metric-sub">inkl. avdrag + prisvekst</div></div><div class="metric"><div class="metric-lbl">LTV</div><div class="metric-val ${m.ltv>80?'bad':m.ltv>60?'warn':'good'}">${fmtD(m.ltv)}%</div></div><div class="metric"><div class="metric-lbl">Egenkapital</div><div class="metric-val good">kr ${fmtK(Math.round(m.eq))}</div></div></div><button class="expand-btn" onclick="toggleDet(${p.id},this)">Vis detaljer og rediger</button><div class="prop-det" id="det-${p.id}"><div class="prop-section">Skatteberegning (korrigert)</div><div style="background:#dcfce7;border-radius:8px;padding:9px 12px;font-size:11px;color:#166534;margin-bottom:10px">Skatt på utleie = 22% av (leie − drift${m.ownCostMonth>0?' − eierkostn.':''}) = 22% × kr ${fmt(Math.round(m.taxableR))} = kr ${fmt(Math.round(m.rTax))}/mnd.<br>Netto utleie = kr ${fmt(p.rent)} − kr ${fmt(p.expenses)}${m.ownCostMonth>0?' − kr '+fmt(Math.round(m.ownCostMonth))+' (eierkostn.)':''} − kr ${fmt(Math.round(m.rTax))} = kr ${fmt(Math.round(m.netRentalCF))}/mnd.<br>Rentefradrag = 22% av renter (kr ${fmt(Math.round(m.intMonth))}/mnd) = kr ${fmt(Math.round(m.interestDeduction))}/mnd — trekkes fra personlig skatt (separat).${m.holdingYears>1?'<br>Eid i '+m.holdingYears+' år — total verdiøkning: kr '+fmtK(Math.round((p.value||0)-(p.purchase||0))):''}</div><div class="prop-row"><span class="prop-row-lbl">Leieinntekt</span><span class="prop-row-val good">kr ${fmt(p.rent)}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">− Driftskostnader</span><span class="prop-row-val">− kr ${fmt(p.expenses)}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">− Skatt (22% av kr ${fmt(Math.round(m.taxableR))})</span><span class="prop-row-val bad">− kr ${fmt(Math.round(m.rTax))}/mnd</span></div><div class="prop-row" style="border-top:1px solid #16a34a;padding-top:6px"><span class="prop-row-lbl"><strong>= Netto utleie-cashflow</strong></span><span class="prop-row-val ${m.netRentalCF>=0?'good':'bad'}"><strong>kr ${fmt(Math.round(m.netRentalCF))}/mnd</strong></span></div><div class="prop-row"><span class="prop-row-lbl">− Lånekostnad (terminbeløp)</span><span class="prop-row-val bad">− kr ${fmt(Math.round(m.mMort))}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">+ Rentefradrag (22% av renter, personlig skatt)</span><span class="prop-row-val good">+ kr ${fmt(Math.round(m.interestDeduction))}/mnd</span></div><div class="prop-row" style="border-top:2px solid #0f172a;padding-top:8px"><span class="prop-row-lbl"><strong>= Total netto etter alt</strong></span><span class="prop-row-val ${cfC}"><strong>kr ${fmt(Math.round(m.cfPost))}/mnd</strong></span></div><div class="prop-section">Formuesbygging (ikke på bankkonto)</div><div class="prop-row"><span class="prop-row-lbl">Avdrag (gjeldsnedbet.)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.principalRepaidAnn))}</span></div><div class="prop-row"><span class="prop-row-lbl">Prisvekst (4%)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.appreciation))}</span></div><div class="prop-row"><span class="prop-row-lbl">Netto utleie etter skatt/år</span><span class="prop-row-val ${m.netRentalProfitAnn>=0?'good':'bad'}">kr ${fmtK(Math.round(m.netRentalProfitAnn))}</span></div><div class="prop-row" style="border-top:2px solid #16a34a;padding-top:10px"><span class="prop-row-lbl"><strong>Total ROI etter skatt</strong></span><span class="prop-row-val good" style="font-size:16px">${fmtD(m.roi)}%</span></div><div class="prop-section">Salgsanalyse — hva sitter du igjen med?</div>
+return`<div class="prop-card"><div class="prop-hdr"><div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800">${esc(p.name)}</div><div style="font-size:12px;color:#64748b">${esc(p.address||'')}${p.sqm?' — '+p.sqm+' kvm':''}${p.purchaseYear?' — kjøpt '+p.purchaseYear:''}</div>${p.loan?`<div style="font-size:11px;color:#64748b;margin-top:3px">${p.ltype==='serial'?'Serielån':'Annuitetslån'}: kr ${fmtK(p.loan)} — ${p.rate}% — kr ${fmt(Math.round(m.mMort))}/mnd</div>`:''}</div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0"><span class="badge ${sb}">${p.status}</span><button class="btn-del" onclick="delProp(${p.id})" style="color:#ef4444;font-size:12px">× slett</button></div></div><div class="prop-body"><div style="background:${m.cfPost>=0?'linear-gradient(135deg,#f0fdf4,#dcfce7)':'linear-gradient(135deg,#fef2f2,#fee2e2)'};border-radius:12px;padding:13px;margin-bottom:10px;border:1px solid ${m.cfPost>=0?'#16a34a':'#dc2626'}"><div style="font-size:10px;color:${m.cfPost>=0?'#16a34a':'#dc2626'};text-transform:uppercase;font-weight:700;letter-spacing:1px;margin-bottom:3px">⭐ Netto cashflow</div><div style="font-size:20px;font-weight:900;color:${m.cfPost>=0?'#16a34a':'#dc2626'}">kr ${fmt(Math.round(m.cfPost))}/mnd</div><div style="font-size:11px;color:#475569;margin-top:2px">= (leie − drift − skatt) − lån + rentefradrag</div></div><div class="metrics"><div class="metric"><div class="metric-lbl">Brutto yield</div><div class="metric-val ${yC}">${fmtD(m.grossY)}%</div><div class="metric-sub">${m.grossY>=5?'Over markedsnorm':'Under markedsnorm'}</div></div><div class="metric"><div class="metric-lbl">ROI (på innskutt EK)</div><div class="metric-val ${m.roi>=8?'good':m.roi>=4?'warn':'bad'}">${fmtD(m.roi)}%</div><div class="metric-sub">inkl. avdrag + prisvekst</div></div><div class="metric"><div class="metric-lbl">ROE (på nåv. EK)</div><div class="metric-val ${m.roe>=8?'good':m.roe>=4?'warn':'bad'}">${fmtD(m.roe)}%</div><div class="metric-sub">avkastning på dagens EK</div></div><div class="metric"><div class="metric-lbl">LTV</div><div class="metric-val ${m.ltv>80?'bad':m.ltv>60?'warn':'good'}">${fmtD(m.ltv)}%</div></div><div class="metric"><div class="metric-lbl">Egenkapital</div><div class="metric-val good">kr ${fmtK(Math.round(m.eq))}</div></div>${m.ownCostMonth>0?'<div class="metric"><div class="metric-lbl">Eierkostnad</div><div class="metric-val warn">kr '+fmt(Math.round(m.ownCostMonth))+'/mnd</div><div class="metric-sub">kr '+fmtK(Math.round(m.ownCostMonth*12))+'/år ('+(p.ownershipCost||0)+'%)</div></div>':''}</div><button class="expand-btn" onclick="toggleDet(${p.id},this)">Vis detaljer og rediger</button><div class="prop-det" id="det-${p.id}"><div class="prop-section">Skatteberegning (korrigert)</div><div style="background:#dcfce7;border-radius:8px;padding:9px 12px;font-size:11px;color:#166534;margin-bottom:10px">Skatt på utleie = 22% av (leie − drift${m.ownCostMonth>0?' − eierkostn.':''}) = 22% × kr ${fmt(Math.round(m.taxableR))} = kr ${fmt(Math.round(m.rTax))}/mnd.<br>Netto utleie = kr ${fmt(p.rent)} − kr ${fmt(p.expenses)}${m.ownCostMonth>0?' − kr '+fmt(Math.round(m.ownCostMonth))+' (eierkostn.)':''} − kr ${fmt(Math.round(m.rTax))} = kr ${fmt(Math.round(m.netRentalCF))}/mnd.<br>Rentefradrag = 22% av renter (kr ${fmt(Math.round(m.intMonth))}/mnd) = kr ${fmt(Math.round(m.interestDeduction))}/mnd — trekkes fra personlig skatt (separat).${m.holdingYears>1?'<br>Eid i '+m.holdingYears+' år — total verdiøkning: kr '+fmtK(Math.round((p.value||0)-(p.purchase||0))):''}</div><div class="prop-row"><span class="prop-row-lbl">Leieinntekt</span><span class="prop-row-val good">kr ${fmt(p.rent)}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">− Driftskostnader</span><span class="prop-row-val">− kr ${fmt(p.expenses)}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">− Skatt (22% av kr ${fmt(Math.round(m.taxableR))})</span><span class="prop-row-val bad">− kr ${fmt(Math.round(m.rTax))}/mnd</span></div><div class="prop-row" style="border-top:1px solid #16a34a;padding-top:6px"><span class="prop-row-lbl"><strong>= Netto utleie-cashflow</strong></span><span class="prop-row-val ${m.netRentalCF>=0?'good':'bad'}"><strong>kr ${fmt(Math.round(m.netRentalCF))}/mnd</strong></span></div><div class="prop-row"><span class="prop-row-lbl">− Lånekostnad (terminbeløp)</span><span class="prop-row-val bad">− kr ${fmt(Math.round(m.mMort))}/mnd</span></div><div class="prop-row"><span class="prop-row-lbl">+ Rentefradrag (22% av renter, personlig skatt)</span><span class="prop-row-val good">+ kr ${fmt(Math.round(m.interestDeduction))}/mnd</span></div><div class="prop-row" style="border-top:2px solid #0f172a;padding-top:8px"><span class="prop-row-lbl"><strong>= Total netto etter alt</strong></span><span class="prop-row-val ${cfC}"><strong>kr ${fmt(Math.round(m.cfPost))}/mnd</strong></span></div><div class="prop-section">Formuesbygging (ikke på bankkonto)</div><div class="prop-row"><span class="prop-row-lbl">Avdrag (gjeldsnedbet.)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.principalRepaidAnn))}</span></div><div class="prop-row"><span class="prop-row-lbl">Prisvekst (4%)/år</span><span class="prop-row-val good">kr ${fmtK(Math.round(m.appreciation))}</span></div><div class="prop-row"><span class="prop-row-lbl">Netto utleie etter skatt/år</span><span class="prop-row-val ${m.netRentalProfitAnn>=0?'good':'bad'}">kr ${fmtK(Math.round(m.netRentalProfitAnn))}</span></div><div class="prop-row" style="border-top:2px solid #16a34a;padding-top:10px"><span class="prop-row-lbl"><strong>Total ROI etter skatt</strong><br><span style="font-size:10px;color:#94a3b8;font-weight:400">avkastning på innskutt EK</span></span><span class="prop-row-val good" style="font-size:16px">${fmtD(m.roi)}%</span></div><div class="prop-row"><span class="prop-row-lbl"><strong>ROE (Return on Equity)</strong><br><span style="font-size:10px;color:#94a3b8;font-weight:400">avkastning på nåværende EK</span></span><span class="prop-row-val ${m.roe>=8?'good':m.roe>=4?'warn':'bad'}" style="font-size:16px">${fmtD(m.roe)}%</span></div><div class="prop-section">Salgsanalyse — hva sitter du igjen med?</div>
 ${(()=>{const sat=calcPropertyAfterTax(p);return `
 <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border-radius:10px;padding:12px;margin-bottom:8px;border:1px solid #bbf7d0">
 <div class="prop-row"><span class="prop-row-lbl">Markedsverdi</span><span class="prop-row-val">kr ${fmtK(Math.round(sat.val))}</span></div>
@@ -1743,22 +1811,24 @@ rowsEl.innerHTML='';
 return;
 }
 const insights=[];
-// Financial freedom estimate
 const annGrowth = t.rentalCf*12 + t.pv*DEFAULT_GROWTH + (t.stk+t.cry)*0.07*(1-TS) + t.bnk*0.03 + t.tbs*12;
-const freedomTarget = t.ti * 12 * 25; // 25x annual income = 4% rule
-if(freedomTarget > 0 && t.nw > 0 && annGrowth > 0){
+// Use user's freedom goal if set, otherwise show NW
+const freedomGoal = D.goals.find(g => g.type === 'freedom' && g.target > 0);
+if(freedomGoal && freedomGoal.target > 0 && t.nw > 0 && annGrowth > 0){
+const freedomTarget = freedomGoal.target;
 const yearsToFreedom = Math.log(freedomTarget / Math.max(1,t.nw)) / Math.log(1 + Math.max(0.01, annGrowth/Math.max(1,t.nw)));
-if(yearsToFreedom > 0 && yearsToFreedom < 100){
-el.innerHTML = 'Du kan bli <strong style="color:#4ade80">finansielt fri om ' + fmtD(yearsToFreedom,1) + ' år</strong>';
-insights.push({icon:'🏝️', text:'Mål: kr '+fmtK(freedomTarget)+' (25x årsinntekt). Nå: kr '+fmtK(t.nw)+' ('+Math.round(t.nw/freedomTarget*100)+'%)'});
-} else if(t.nw >= freedomTarget){
+if(t.nw >= freedomTarget){
 el.innerHTML = 'Du er <strong style="color:#4ade80">finansielt fri</strong> allerede';
-insights.push({icon:'🏝️', text:'Formue kr '+fmtK(t.nw)+' overstiger 25x årsinntekt (kr '+fmtK(freedomTarget)+')'});
+insights.push({icon:'🏝️', text:'Formue kr '+fmtK(t.nw)+' overstiger ditt mål (kr '+fmtK(freedomTarget)+')'});
+} else if(yearsToFreedom > 0 && yearsToFreedom < 100){
+el.innerHTML = 'Du kan nå målet ditt om <strong style="color:#4ade80">' + fmtD(yearsToFreedom,1) + ' år</strong>';
+insights.push({icon:'🏝️', text:'Mål: kr '+fmtK(freedomTarget)+'. Nå: kr '+fmtK(t.nw)+' ('+Math.round(t.nw/freedomTarget*100)+'%)'});
 } else {
 el.innerHTML = 'Netto formue: <strong style="color:#4ade80">kr '+fmtK(t.nw)+'</strong>';
 }
 } else {
 el.innerHTML = 'Netto formue: <strong style="color:#4ade80">kr '+fmtK(t.nw)+'</strong>';
+if(D.goals.length === 0 && t.nw > 0) insights.push({icon:'🎯', text:'Sett et mål under <strong>Mål</strong> for personlig innsikt'});
 }
 // Cashflow insight
 if(t.rentalCf !== 0){
@@ -1801,47 +1871,74 @@ rowsEl.innerHTML = insights.slice(0,4).map(i=>'<div class="insight-row"><div cla
 }
 
 // ── ACTION PLAN (Structured todo-list style) ──
+function calcYearsToTarget(currentNW, annGrowth, target){
+if(!target || target <= 0 || currentNW >= target) return 0;
+if(annGrowth <= 0) return 999;
+return Math.log(target / Math.max(1, currentNW)) / Math.log(1 + Math.max(0.01, annGrowth / Math.max(1, currentNW)));
+}
 function updateActionPlan(t){
 const el=document.getElementById('action-plan');
 if(!t) t=tots();
 const hasData = D.properties.length || D.savings.length || t.ti;
 if(!hasData){el.innerHTML='<div class="empty" style="padding:12px">Legg inn data for personlig handlingsplan</div>';return;}
 const actions=[];
-// Refinance check
+// Calc annual growth for impact estimates
+const annPrincipal=t.rentals.reduce((s,p)=>s+propM(p).principalRepaidAnn,0);
+const annGrowth=t.rentalCf*12+annPrincipal+t.pv*DEFAULT_GROWTH+(t.stk+t.cry)*0.07*(1-TS)+t.bnk*0.03+t.tbs*12;
+const freedomGoal = D.goals.find(g => g.type === 'freedom' && g.target > 0);
+const freedomTarget = freedomGoal ? freedomGoal.target : 0;
+const currentYears = freedomTarget > 0 ? calcYearsToTarget(t.nw, annGrowth, freedomTarget) : 0;
+// Refinance check — with impact
 t.rentals.forEach(p=>{
 if(p.rate > 5.0){
 const saving = Math.round((p.loan||0) * (p.rate - 4.5) / 100);
-actions.push({title:'Refinansier '+p.name, desc:'Renten din ('+fmtD(p.rate)+'%) er høyere enn markedsnitt', value:'Spar kr '+fmtK(saving)+'/år', act:"navTo('properties')"});
+const impactYrs = freedomTarget > 0 ? fmtD(Math.max(0, currentYears - calcYearsToTarget(t.nw, annGrowth + saving, freedomTarget)), 1) : '';
+actions.push({title:'Refinansier '+p.name, desc:'Renten din ('+fmtD(p.rate)+'%) er over markedsnitt (4.5%)', value:'Spar kr '+fmtK(saving)+'/år'+(impactYrs?' → frihet '+impactYrs+' år raskere':''), act:"navTo('properties')"});
 }
 });
-// Next property
+// Next property — with estimated ROI impact
 if(t.totalAvailable > 450000 && t.rentalCf >= 0){
-const maxBuy = Math.round(t.totalAvailable / 0.15);
-actions.push({title:'Du er klar for neste eiendom', desc:'Tilgjengelig EK: kr '+fmtK(Math.round(t.totalAvailable)), value:'Kjøp for opp til kr '+fmtK(maxBuy), act:"navTo('calc')"});
+const grossAnnual = t.ti * 12;
+const netRentalAnn = t.rentals.reduce((s,p)=>s+(p.rent||0)-(p.expenses||0),0) * 12;
+const maxDebt = (grossAnnual + Math.max(0,netRentalAnn)) * 5 - t.td;
+const maxBuy = Math.round(Math.min(t.totalAvailable / 0.15, maxDebt + t.totalAvailable));
+const estRent = Math.round(maxBuy * 0.045 / 12); // est 4.5% yield
+const estCF = Math.round(estRent - estRent*0.22 - calcLoan(maxBuy*0.85,5.5,25,'annuity').avg);
+actions.push({title:'Du er klar for neste eiendom', desc:'EK: kr '+fmtK(Math.round(t.totalAvailable))+' — Maks kjøp: kr '+fmtK(maxBuy), value:'Est. cashflow kr '+fmt(estCF)+'/mnd ved 4.5% yield', act:"navTo('calc')"});
 }
-// Savings rate
+// Savings rate — with goal impact
 if(t.ti > 0 && t.sr < 20){
 const extra = Math.round(t.ti * 0.2 - t.tbs);
-actions.push({title:'Øk sparegraden til 20%', desc:'Nå: '+fmtD(t.sr)+'%. Mål: 20%', value:'kr '+fmt(extra)+'/mnd ekstra', act:"navTo('budget')"});
+let impactStr = 'kr '+fmt(extra)+'/mnd ekstra → kr '+fmtK(extra*12)+'/år';
+if(freedomTarget > 0 && extra > 0){
+const newYears = calcYearsToTarget(t.nw, annGrowth + extra*12, freedomTarget);
+const saved = currentYears - newYears;
+if(saved > 0.3) impactStr += ' → frihet '+fmtD(saved,1)+' år raskere';
 }
-// Vacancy
+actions.push({title:'Øk sparegraden til 20%', desc:'Nå: '+fmtD(t.sr)+'%. Mål: 20%', value:impactStr, act:"navTo('budget')"});
+}
+// Vacancy — with annual loss
 t.rentals.filter(p=>p.status==='Ledig').forEach(p=>{
-actions.push({title:p.name+' er ledig — handling kreves', desc:'Tapt leieinntekt: kr '+fmt(p.rent)+'/mnd', value:'kr '+fmt((p.rent||0)*12)+'/år tapt', act:"navTo('properties')"});
+actions.push({title:p.name+' er ledig — handling kreves', desc:'Tapt leieinntekt: kr '+fmt(p.rent)+'/mnd = kr '+fmtK((p.rent||0)*12)+'/år', value:'Leier du ut i dag, øker cashflow med kr '+fmt(p.rent)+'/mnd', act:"navTo('properties')"});
 });
 // Interest deduction check
 if(t.intTaxRed > 500){
-actions.push({title:'Hent rentefradrag kr '+fmt(Math.round(t.intTaxRed*12))+'/år', desc:'Sjekk at alle renter er rapportert i skattemeldingen', value:'22% av kr '+fmtK(Math.round(t.totalIntMonth*12))+' i renter', act:''});
+actions.push({title:'Hent rentefradrag kr '+fmt(Math.round(t.intTaxRed*12))+'/år', desc:'22% av kr '+fmtK(Math.round(t.totalIntMonth*12))+' i renter — sjekk skattemeldingen', value:'Tilsvarer kr '+fmt(Math.round(t.intTaxRed))+'/mnd i skattebesparelse', act:''});
 }
-// Invest idle cash
+// Invest idle cash — with return difference
 if(t.bnk > t.nw * 0.3 && t.bnk > 100000){
 const investable = Math.round(t.bnk * 0.5);
-actions.push({title:'Investér overskuddslikviditet', desc:'kr '+fmtK(t.bnk)+' i bank gir lav avkastning', value:'Flytt kr '+fmtK(investable)+' til indeksfond', act:"navTo('more')"});
+const bankReturn = Math.round(investable * 0.03);
+const fundReturn = Math.round(investable * 0.07 * (1 - TS));
+const diff = fundReturn - bankReturn;
+actions.push({title:'Investér overskuddslikviditet', desc:'kr '+fmtK(t.bnk)+' i bank gir ~3%/år', value:'Flytt kr '+fmtK(investable)+' til indeksfond → +kr '+fmtK(diff)+'/år mer avkastning', act:"navTo('more')"});
 }
 // LTV warning
 const ltv = t.pv ? (t.pd/t.pv*100) : 0;
 if(ltv > 80){
 const paydown = Math.round(t.pd - t.pv*0.75);
-actions.push({title:'Betal ned gjeld — LTV '+Math.round(ltv)+'%', desc:'Mål 75% LTV for å redusere risiko', value:'Betal ned kr '+fmtK(paydown), act:''});
+const extraInt = Math.round(paydown * 0.055 / 12);
+actions.push({title:'Betal ned gjeld — LTV '+Math.round(ltv)+'%', desc:'Mål 75% LTV for å redusere risiko og rentekostnad', value:'Betal ned kr '+fmtK(paydown)+' → spar kr '+fmt(extraInt)+'/mnd i renter', act:''});
 }
 if(!actions.length){
 actions.push({title:'Porteføljen din er i god form', desc:'Fortsett å spare og bygg formue over tid', value:'', act:''});
@@ -1858,27 +1955,69 @@ if(!t) t=tots();
 const hasData = D.properties.length || D.savings.length || t.ti;
 if(!hasData){el.innerHTML='<div class="empty">Legg inn data for AI-anbefalinger</div>';return;}
 const decisions=[];
-// Rate comparison
+const annPrincipal=t.rentals.reduce((s,p)=>s+propM(p).principalRepaidAnn,0);
+const annGrowth=t.rentalCf*12+annPrincipal+t.pv*DEFAULT_GROWTH+(t.stk+t.cry)*0.07*(1-TS)+t.bnk*0.03+t.tbs*12;
+const freedomGoal = D.goals.find(g => g.type === 'freedom' && g.target > 0);
+const freedomTarget = freedomGoal ? freedomGoal.target : 0;
+const currentYears = freedomTarget > 0 ? calcYearsToTarget(t.nw, annGrowth, freedomTarget) : 0;
+// Rate comparison — with specific savings + goal impact
 t.rentals.forEach(p=>{
-if(p.rate > 5.2) decisions.push({type:'warn', title:'Refinansier '+p.name+' — renten er '+fmtD(p.rate)+'% over snittet', body:'Markedsrente er rundt 4.5–5.0%. Ved refinansiering sparer du ca kr '+fmt(Math.round((p.loan||0)*(p.rate-4.5)/100))+'/år.', action:'Se lånekalkulator →', act:"navTo('calc');showTab('t-mc',document.querySelector('.inner-tab:nth-child(4)'))"});
-});
-// Can buy
-if(t.totalAvailable > 500000 && t.rentalCf >= 0 && D.properties.length >= 1){
-decisions.push({type:'', title:'Du kan kjøpe ny eiendom nå', body:'Med kr '+fmtK(Math.round(t.totalAvailable))+' fri EK og positiv cashflow har du grunnlaget. Kjøp for opp til kr '+fmtK(Math.round(t.totalAvailable/0.15))+'.', action:'Kjør kjøpsanalyse →', act:"navTo('calc')"});
+if(p.rate > 5.2){
+const annSaving = Math.round((p.loan||0)*(p.rate-4.5)/100);
+const monSaving = Math.round(annSaving/12);
+let impact = 'Sparer kr '+fmt(monSaving)+'/mnd = kr '+fmtK(annSaving)+'/år.';
+if(freedomTarget > 0){
+const newYrs = calcYearsToTarget(t.nw, annGrowth + annSaving, freedomTarget);
+const diff = currentYears - newYrs;
+if(diff > 0.2) impact += ' Frihet '+fmtD(diff,1)+' år raskere.';
 }
-// Losing money
+decisions.push({type:'warn', title:'Refinansier '+p.name+' — '+fmtD(p.rate)+'% vs. markedsnitt 4.5%', body:impact, action:'Se lånekalkulator →', act:"navTo('calc');showTab('t-mc',document.querySelector('.inner-tab:nth-child(4)'))"});
+}
+});
+// Can buy — with estimated income impact
+if(t.totalAvailable > 500000 && t.rentalCf >= 0 && D.properties.length >= 1){
+const grossAnnual = t.ti * 12;
+const netRentalAnn = t.rentals.reduce((s,p)=>s+(p.rent||0)-(p.expenses||0),0) * 12;
+const maxDebt = (grossAnnual + Math.max(0,netRentalAnn)) * 5 - t.td;
+const maxBuy = Math.round(Math.min(t.totalAvailable/0.15, maxDebt + t.totalAvailable));
+const estRent = Math.round(maxBuy * 0.045 / 12);
+const estLoan = Math.round(maxBuy * 0.85);
+const estMort = calcLoan(estLoan,5.5,25,'annuity').avg;
+const estCF = Math.round(estRent - estRent*0.22 - estMort);
+const estPrincipal = Math.round(estMort*12 - estLoan*0.055);
+const estAppreciation = Math.round(maxBuy * 0.04);
+decisions.push({type:'', title:'Klar for ny eiendom — maks kr '+fmtK(maxBuy), body:'Med kr '+fmtK(Math.round(t.totalAvailable))+' fri EK. Est. cashflow kr '+fmt(estCF)+'/mnd + formuesbygging kr '+fmtK(Math.round(estPrincipal+estAppreciation))+'/år (avdrag + prisvekst).', action:'Kjør kjøpsanalyse →', act:"navTo('calc')"});
+}
+// Losing money — with specific fix
 const losingProps = t.rentals.filter(p=>propM(p).cfPost < -2000);
 losingProps.forEach(p=>{
 const m = propM(p);
-decisions.push({type:'alert', title:p.name+' taper kr '+fmt(Math.round(Math.abs(m.cfPost)))+'/mnd', body:'Vurder leieøkning ('+fmtD(m.grossY)+'% yield) eller refinansiering. En leieøkning på kr '+fmt(Math.round(Math.abs(m.cfPost)))+' ville gitt break-even.', action:'Se eiendom →', act:"navTo('properties')"});
+const neededRent = Math.round(Math.abs(m.cfPost) + (p.rent||0));
+const yieldIfFixed = ((neededRent*12)/(p.value||1)*100);
+decisions.push({type:'alert', title:p.name+' taper kr '+fmt(Math.round(Math.abs(m.cfPost)))+'/mnd = kr '+fmtK(Math.round(Math.abs(m.cfPost)*12))+'/år', body:'Øk leien til kr '+fmt(neededRent)+'/mnd (yield '+fmtD(yieldIfFixed)+'%) for break-even. Alternativt: refinansier fra '+fmtD(p.rate)+'% til 4.5% → spar kr '+fmt(Math.round((p.loan||0)*(p.rate-4.5)/100/12))+'/mnd.', action:'Se eiendom →', act:"navTo('properties')"});
 });
-// High savings ratio in bank
+// High bank savings — with concrete return comparison
 if(t.bnk > 500000 && t.bnk > t.stk * 2){
-decisions.push({type:'warn', title:'Du har for mye i bank — mister avkastning', body:'kr '+fmtK(t.bnk)+' i bank gir ~3%/år. I indeksfond: ~7%/år. Forskjell: kr '+fmtK(Math.round(t.bnk*0.04))+'/år.', action:'Se finansielle eiendeler →', act:"navTo('more')"});
+const investable = Math.round(t.bnk * 0.5);
+const bankReturn = Math.round(investable * 0.03);
+const fundReturn = Math.round(investable * 0.07 * (1 - TS));
+const diff = fundReturn - bankReturn;
+const in10yr = Math.round(investable * Math.pow(1.054,10) - investable * Math.pow(1.03,10));
+decisions.push({type:'warn', title:'kr '+fmtK(t.bnk)+' i bank — mister kr '+fmtK(diff)+'/år', body:'Flytt kr '+fmtK(investable)+' til globalt indeksfond. Bank: ~3%/år = kr '+fmtK(bankReturn)+'. Fond: ~7% (5.4% etter skatt) = kr '+fmtK(fundReturn)+'. Forskjell over 10 år: kr '+fmtK(in10yr)+'.', action:'Se finansielle eiendeler →', act:"navTo('more')"});
+}
+// Specific savings impact
+if(freedomTarget > 0 && t.tbs > 0 && currentYears > 2){
+const extraSav = Math.round(t.tbs * 0.5); // suggest 50% more
+const newYrs = calcYearsToTarget(t.nw, annGrowth + extraSav*12, freedomTarget);
+const diff = currentYears - newYrs;
+if(diff > 0.5){
+decisions.push({type:'', title:'Øk sparing med kr '+fmt(extraSav)+'/mnd → frihet '+fmtD(diff,1)+' år raskere', body:'Nå: kr '+fmt(t.tbs)+'/mnd. Med kr '+fmt(t.tbs+extraSav)+'/mnd når du '+fmtK(freedomTarget)+' på '+fmtD(newYrs,1)+' år i stedet for '+fmtD(currentYears,1)+' år.', action:'Se budsjett →', act:"navTo('budget')"});
+}
 }
 // Good performance
 if(t.rentalCf > 5000 && t.ay >= 5){
-decisions.push({type:'', title:'Porteføljen presterer i toppsjiktet', body:'Yield '+fmtD(t.ay)+'% og positiv cashflow kr '+fmt(Math.round(t.rentalCf))+'/mnd. Reinvester overskudd i indeksfond for diversifisering.', action:''});
+const annCF = Math.round(t.rentalCf*12);
+decisions.push({type:'', title:'Porteføljen presterer i toppsjiktet', body:'Yield '+fmtD(t.ay)+'%, cashflow kr '+fmt(Math.round(t.rentalCf))+'/mnd = kr '+fmtK(annCF)+'/år. Reinvester i indeksfond → dobbel eksponering mot markedet.', action:''});
 }
 if(!decisions.length && hasData){
 decisions.push({type:'', title:'Ingen kritiske tiltak nå', body:'Porteføljen din ser sunn ut. Fortsett å spare og hold øye med rentenivået.', action:''});
@@ -1897,53 +2036,75 @@ const LEVEL_COLORS = [
   {bg:'linear-gradient(135deg,#fce7f3,#fbcfe8)',border:'#db2777',badge:'#db2777',text:'#9d174d',bar:'#db2777'}, // L6 pink
   {bg:'linear-gradient(135deg,#0f172a,#1e293b)',border:'#f59e0b',badge:'#f59e0b',text:'#fbbf24',bar:'#f59e0b'}  // L7 black+gold
 ];
+// Level based on investing experience, not just NW
+function calcInvestorLevel(t){
+const rentals = t.rentals.length;
+const hasPrimary = t.primary.length > 0;
+const hasInvestments = t.stk + t.cry > 0;
+const hasSavings = t.tbs > 0;
+const nw = t.nw;
+const positiveCF = t.rentalCf > 0;
+// L1: Just started — has primary or savings/income
+// L2: Building foundation — has savings plan + investments OR primary + savings
+// L3: First rental property
+// L4: 2+ rentals with positive cashflow
+// L5: 3+ rentals, NW > 5M, diversified portfolio
+// L6: 5+ rentals, NW > 10M
+// L7: 7+ rentals, NW > 25M, legendary status
+if(rentals >= 7 && nw >= 25000000) return 7;
+if(rentals >= 5 && nw >= 10000000) return 6;
+if(rentals >= 3 && nw >= 5000000 && hasInvestments) return 5;
+if(rentals >= 2 && positiveCF) return 4;
+if(rentals >= 1) return 3;
+if((hasPrimary || hasInvestments) && hasSavings) return 2;
+return 1;
+}
+const LEVEL_DEFS = [
+  {level:1,name:'Starter',emoji:'🌱',desc:'Bygg grunnlaget'},
+  {level:2,name:'Sparer',emoji:'💰',desc:'Spareavtale + investeringer'},
+  {level:3,name:'Investor',emoji:'📈',desc:'Første utleieeiendom'},
+  {level:4,name:'Strateg',emoji:'🏆',desc:'2+ eiendommer, positiv CF'},
+  {level:5,name:'Mogul',emoji:'👑',desc:'3+ eiendommer, diversifisert'},
+  {level:6,name:'Tycoon',emoji:'💎',desc:'5+ eiendommer, 10M+'},
+  {level:7,name:'Legend',emoji:'🔥',desc:'7+ eiendommer, 25M+'}
+];
 function updateLevel(t){
 if(!t) t=tots();
 const card=document.getElementById('level-card');
 const hasData = D.properties.length || D.savings.length || t.ti;
 if(!hasData){card.style.display='none';return;}
 card.style.display='block';
-const nw=t.nw;
-const milestones=[
-{level:1,name:'Starter',min:0,max:500000,emoji:'🌱'},
-{level:2,name:'Sparer',min:500000,max:1000000,emoji:'💰'},
-{level:3,name:'Investor',min:1000000,max:3000000,emoji:'📈'},
-{level:4,name:'Strateg',min:3000000,max:5000000,emoji:'🏆'},
-{level:5,name:'Mogul',min:5000000,max:10000000,emoji:'👑'},
-{level:6,name:'Tycoon',min:10000000,max:25000000,emoji:'💎'},
-{level:7,name:'Legend',min:25000000,max:100000000,emoji:'🔥'}
-];
-let current=milestones[0];
-for(const m of milestones){if(nw>=m.min) current=m;}
-const next=milestones[Math.min(milestones.indexOf(current)+1,milestones.length-1)];
-const pct=current===next?100:Math.min(100,Math.round((nw-current.min)/(next.max-current.min)*100));
+const lvl = calcInvestorLevel(t);
+const current = LEVEL_DEFS[lvl-1];
+const next = lvl < 7 ? LEVEL_DEFS[lvl] : current;
+const pct = current===next ? 100 : Math.round(50); // simplified — progress shown via description
 // Apply level colors
-const lc = LEVEL_COLORS[current.level-1];
+const lc = LEVEL_COLORS[lvl-1];
 card.style.background = lc.bg;
 card.style.borderColor = lc.border;
 const badge = document.getElementById('level-badge');
 badge.textContent=current.emoji+' Level '+current.level+' '+current.name;
 badge.style.background = lc.badge;
 const nextEl = document.getElementById('level-next');
-nextEl.textContent=current===next?'Maks level!':'Neste: kr '+fmtK(next.min);
+nextEl.textContent=lvl>=7?'Maks level!':'Neste: '+next.desc;
 nextEl.style.color = lc.text;
-document.getElementById('level-bar').style.width=pct+'%';
+document.getElementById('level-bar').style.width=(lvl>=7?100:Math.round(lvl/7*100))+'%';
 document.getElementById('level-bar').style.background = lc.bar;
 const progEl = document.getElementById('level-progress');
-progEl.textContent=pct+'% til neste level';
+progEl.textContent=current.desc;
 progEl.style.color = lc.text;
-// Level 7 special: white text
-if(current.level === 7) {
+if(lvl === 7) {
   nextEl.style.color = '#fbbf24';
   progEl.style.color = '#fbbf24';
   document.getElementById('level-compare').style.color = '#fbbf24';
 }
 // Level-up popup
-if(_lastLevel > 0 && current.level > _lastLevel){
+if(_lastLevel > 0 && lvl > _lastLevel){
   showLevelUp(current);
 }
-_lastLevel = current.level;
-// Comparison (simulated percentile based on NW)
+_lastLevel = lvl;
+// Comparison
+const nw=t.nw;
 let percentile=50;
 if(nw>10000000) percentile=99;
 else if(nw>5000000) percentile=95;
@@ -2019,10 +2180,15 @@ checkOnboarding();
   }
   function hideSyncToast() { const t = document.getElementById('sync-toast'); if(t) t.classList.remove('show'); }
 
+  // Prevent cloud save during initial load to avoid overwriting cloud with empty local data
+  let _cloudLoadComplete = false;
+
   window.cloudSave = async () => {
     if(!window._userId) return;
     // Don't save if Firebase auth isn't ready yet
     if(!auth.currentUser) return;
+    // Don't save until initial cloud load is complete (prevents overwriting cloud data)
+    if(!_cloudLoadComplete) return;
     clearTimeout(_syncTimer);
     _syncTimer = setTimeout(async () => {
       try {
@@ -2037,7 +2203,7 @@ checkOnboarding();
         showSyncToast('✓ Lagret', 1500);
       } catch(e) {
         console.warn('Cloud save failed:', e);
-        showSyncToast('Lagring feilet', 2500);
+        showSyncToast('Lagring feilet — sjekk nettforbindelse', 3000);
       }
     }, 2000); // debounce 2s
   };
@@ -2116,7 +2282,9 @@ checkOnboarding();
     if(cloudData) {
       const localHasData = window.D.properties.length > 0 || window.D.savings.length > 0 || window.D.incomes.length > 0;
       if(!localHasData || confirm('Skylagrede data funnet. Vil du laste inn fra skyen? (Overskriver lokale data)')) {
-        window.D = {...window.D, ...cloudData};
+        // Deep merge: use cloud data but ensure all required keys exist
+        const defaults = {properties:[],savings:[],loans:[],incomes:[],expenses:[],budgetSavings:[],goals:[],links:[],wealthHistory:[]};
+        window.D = {...defaults, ...cloudData};
         window.save();
         window.renderProps(); window.renderLoans(); window.renderGoals();
         window.renderSavings && window.renderSavings();
@@ -2126,6 +2294,8 @@ checkOnboarding();
         window.updateAll();
       }
     }
+    // Mark cloud load as complete — now cloudSave is allowed
+    _cloudLoadComplete = true;
   }
 
   window._doLoginReal = async () => {
@@ -2174,6 +2344,7 @@ checkOnboarding();
     try { await signOut(auth); } catch(e) {}
     localStorage.removeItem('wOS_profile');
     window._userId = null;
+    _cloudLoadComplete = false;
     window._userPro = false;
     document.getElementById('login-form-area').style.display='block';
     document.getElementById('signup-form-area').style.display='none';
